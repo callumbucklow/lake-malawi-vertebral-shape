@@ -738,9 +738,9 @@ a1 <- ggplot(species_data, aes(x=ln_length_ln_width, y=precaudal_PC1))+
   geom_abline(intercept = precaudal_individual_PC_elongation_models$precaudal_PC1$coefficients[[1]], 
               slope = precaudal_individual_PC_elongation_models$precaudal_PC1$coefficients[[2]], 
               size = 0.75, colour = 'red', linetype = 'dashed')+ #PGLS is red
-  #geom_abline(intercept=precaudal_PC1_elongation_ols$coefficients[[1]], 
-              #slope = precaudal_PC1_elongation_ols$coefficients[[2]], 
-              #size = 0.75, colour = 'black', linetype = 'solid')+ # OLS is black #lines are the same as lambda is basically 0 
+  geom_abline(intercept=precaudal_PC1_elongation_ols$coefficients[[1]], 
+              slope = precaudal_PC1_elongation_ols$coefficients[[2]], 
+              size = 0.75, colour = 'black', linetype = 'solid')+ # OLS is black #lines are the same as lambda is basically 0 
    scale_fill_manual(values = c(
   "Astatotilapia" = "#E87D72",
   "not_applicable" = "#E87D72",
