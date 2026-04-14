@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.httr-oauth
+.DS_Store
+.quarto
+Figures/
+Images for Manuscript/
+Specimen Images (Geometric Morphometrics)/
+Vertebrae Models\ /
+Vertebrae Coordinates (Json)/
+Manuscipt_Plan.docx
+Paper_Figures.pptx
+*.docx
+*.pptx
+*.pdf
+*.ply
