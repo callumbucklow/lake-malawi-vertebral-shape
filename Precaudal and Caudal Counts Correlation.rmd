@@ -187,7 +187,7 @@ count_vec <- count_vec[tree2$tip.label]
 pcc_vec   <- pcc_vec[tree2$tip.label]
 
 #setseed
-set.seed(1931)
+set.seed(1931) #this is useful for making sure the same colours are picked each time
 
 # build contMap objects
 cm_pcc <- phytools::contMap(tree2, pcc_vec, plot = FALSE)
