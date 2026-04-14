@@ -1,645 +1,0 @@
-if (!requireNamespace("BiocManager", quietly = TRUE))#
-    install.packages("BiocManager")#
-BiocManager::install()
-if (!requireNamespace("BiocManager", quietly = TRUE))#
-+     install.packages("BiocManager")
-library(BiocManager)#
-Bioconductor version 3.9 (BiocManager 1.30.4), ?BiocManager::install#
-for help
-if (!requireNamespace("BiocManager", quietly = TRUE))#
-    install.packages("BiocManager")#
-BiocManager::install()
-if (!requireNamespace("BiocManager", quietly = TRUE))#
-    install.packages("BiocManager")#
-#
-BiocManager::install("annotatr")
-annotations
-annotate_regions(regions, annotations, minoverlap = 1L,#
-ignore.strand = TRUE, quiet = FALSE)
-BiocManager::install("annotatr")
-draw.triple.venn(area1 = 967, area2 = 4965, area3 = 9583, n12 = 216, n23 = 2346, n13 = 423, n123 = 187, category = c("Mes", 3), rotation = 1, reverse = FALSE, euler.d =#
-    TRUE, scaled = TRUE, lwd = rep(2, 3), lty =#
-    rep("solid", 3), col = rep("black", 3), fill = NULL,#
-    alpha = rep(0.5, 3), label.col = rep("black", 7), cex#
-    = rep(1, 7), fontface = rep("plain", 7), fontfamily =#
-    rep("serif", 7), cat.pos = c(-40, 40, 180), cat.dist =#
-    c(0.05, 0.05, 0.025), cat.col = rep("black", 3),#
-    cat.cex = rep(1, 3), cat.fontface = rep("plain", 3),#
-    cat.fontfamily = rep("serif", 3), cat.just =#
-    list(c(0.5, 1), c(0.5, 1), c(0.5, 0)), cat.default.pos#
-    = "outer", cat.prompts = FALSE, rotation.degree = 0,#
-    rotation.centre = c(0.5, 0.5), ind = TRUE, sep.dist =#
-    0.05, offset = 0, cex.prop = NULL, print.mode = "raw",#
-    sigdigs = 3, direct.area = FALSE, area.vector = 0,#
-    ...)
-draw.triple.venn(area1 = 967, area2 = 4965, area3 = 9583, n12 = 216, n23 = 2346, n13 = 423, n123 = 187, category = c("Mespaa", "Cdx4", "Sall4"), fill = c("blue", "red", "green"), lty = "blank", cex = 2, cat.cex = 2, cat.col = c("blue", "red", "green"); grid.draw(venn.plot); grid.newpage();
-raw.triple.venn(area1 = 967, area2 = 4965, area3 = 9583, n12 = 216, n23 = 2346, n13 = 423, n123 = 187, category = c("Mespaa", "Cdx4", "Sall4"), fill = c("blue", "red", "green"), lty = "blank", cex = 2, cat.cex = 2, cat.col = c("blue", "red", "green"); grid.draw(venn.plot);
-raw.triple.venn(area1 = 967, area2 = 4965, area3 = 9583, n12 = 216, n23 = 2346, n13 = 423, n123 = 187, category = c("Mespaa", "Cdx4", "Sall4"), fill = c("blue", "red", "green"), lty = "blank", cex = 2, cat.cex = 2, cat.col = c("blue", "red", "green"); grid.draw(venn.plot)
-draw.triple.venn(area1 = 967, area2 = 4965, area3 = 9583, n12 = 216, n23 = 2346, n13 = 423, n123 = 187, category = c("Mespaa", "Cdx4", "Sall4"), fill = c("blue", "red", "green"), lty = "blank", cex = 2, cat.cex = 2, cat.col = c("blue", "red", "green"); grid.draw(venn.plot); grid.newpage();
-clear
-install.packages("Vennerable")
-#Callum Bucklow. August 2020. #
-#
-#Tutorial script for conducting two way ANOVAs in R. #
-#
-#Two way ANOVA - compare two explanatory variables against a measurable variable#
-#
-#The two-way ANOVA compares the mean differences between groups that have been #
-#split on two independent variables (called factors). #
-#The primary purpose of a two-way ANOVA is to understand if there is an #
-#interaction between the two independent variables on the dependent variable.#
-#
-#################################################################################
-#this example compares a particular diet and a supplement on the weight gain#
-#of cows. #
-#
-#independent variables: diet and supplement #
-#dependent variable: weight gain #
-#
-#as always follow the rule:#
-#check data -> plot data -> model data -> test data -> plot again#
-#
-#A two-way ANOVA with replication tests three null hypotheses: #
-# 1) that the means of observations grouped by one factor are the same; #
-# 2) that the means of observations grouped by the other factor are the same; #
-# 3) and, that there is no interaction between the two factors.#
-#
-#to put this in our biological terms: #
-#
-# 1) there is no difference in mean weight gain between the three diets: #
-#wheat; oats and barley. #
-# 2) there is no difference in the mean weight gain between the supplements:#
-#control; supergrain; supersupplement; agrimore#
-# 3) there is no interaction between the diets and supplements on mean cow #
-#weight gain.#
-#
-#################################################################################
-#
-#clear R: #
-rm(list=ls())#
-#
-# install packages if not present:#
-# install.packages("dplyr")#
-# install.packages("ggplot2")#
-# install.packages("ggfortify")#
-#
-#load the required packages: #
-library(dplyr)#
-library(ggplot2)#
-library(ggfortify)#
-#
-#import the data: #
-library(readr)#
-cow_growth <- read.csv(#
-  "~/Desktop/R Projects/Training Datasets/growth.csv", stringsAsFactors=T)#
-#stringsAsFactors=T convert strings to factors!! important for ANOVA#
-#
-#view the data: #
-head(cow_growth)#
-glimpse(cow_growth)#
-#
-#use levels() to call the levels associated with a factor: #
-levels(cow_growth$diet) #$ return levels of 'diet' from object: cow_growth#
-#
-#[1] "barley" "oats"   "wheat" #
-#
-levels(cow_growth$supplement) #return supplement levels. supergrain, agrimore etc.#
-#
-#[1] "agrimore"  "control"   "supergain" "supersupp"#
-#
-#remember that R uses 'treatment contrasts' to present data from ANOVAs etc.#
-#in tables. This means will organise the data alphabetically, we want the#
-#reference level to be the control measurements, not 'agrimore' so that#
-#treatment means are compared against the control means. #
-#
-#Therefore, need to re-level the data so that control is the reference level:#
-#
-cow_growth_2 <- #
-  mutate(cow_growth, #
-         supplement=relevel(supplement, ref="control"))#
-#
-#check to see if this worked:#
-#
-levels(cow_growth_2$supplement)#
-#
-#[1] "control"   "agrimore"  "supergain" "supersupp"#
-#
-#control now the reference (first) level and will be the basis of the contrast.#
-#
-#plot the data, easiest to plot mean growth increases so first need to define #
-#the mean growth increases: #
-#
-mean_summary <- cow_growth_2 %>%#
-  group_by(diet, supplement) %>% #group cow_growth_2 by diet (wheat, barley, oat)#
-  #then group the supplement levels within the diet groups.#
-  summarise(meanGrow=mean(gain)) #return a summary table of the mean of the #
-  #gain of weight within the defined groups i.e. barley control, wheat agrimore#
-#
-print(mean_summary) #show me in the console#
-#
-#output: #
-#diet    supplement     meanGrow#
-#<fct>     <fct>         <dbl>#
-#1 barley  control        23.3#
-#2 barley  agrimore       26.3#
-#3 barley  supergain      22.5#
-#4 barley  supersupp      25.6#
-#5 oats    control        20.5#
-#6 oats    agrimore       23.3#
-#7 oats    supergain      19.7#
-#8 oats    supersupp      21.9#
-#9 wheat   control        17.4#
-#10 wheat  agrimore       19.6#
-#11 wheat  supergain      17.0#
-#12 wheat  supersupp      19.7#
-#
-#plot the mean data as an INTERACTION PLOT: #
-ggplot(mean_summary, aes(x=supplement, y=meanGrow, #
-                         colour=diet, group=diet, shape=diet))+#
-  geom_point(size=3)+#
-  geom_line()+ #insert lines between GROUP points as defined in aes()#
-  scale_y_continuous(breaks=seq(from=16, to=28, by=2.0))+#
-  xlab("Supplement")+#
-  ylab("Mean Weight Increase (kg)")+#
-  theme_bw()#
-ggsave("cow_weight_increase_interaction_plot.pdf", path="~/Desktop")#
-#
-#does the effect of the supplement type on cow weight gain depend on the diet?#
-#the plot would suggest that supplement is independent of diet:#
-#barley consistently reports a higher mean weight increase, independent of#
-#the supplement, which follows the same pattern, regardless of the supplement.#
-#
-#need to check these assumptions with a two-way ANOVA: #
-#
-#H0: The effect of supplement type on weight gain DOES NOT depend on the diet.#
-#HA: The effect of supplement type on weight gain DOES depend on the diet.#
-#
-#if we return a p-value that is significant we can reject H0 and accept HA. #
-#However, we see from our interaction plot that that it is unlikely that #
-#supplement effect depends on the diet used (since all lines are parallel#
-#and follow the same pattern):#
-#
-#construct linear model with lm():#
-model_cow_growth <- lm(gain~diet*supplement, data=cow_growth_2)#
-# use * between the two explanatory variables, R will read this as: #
-#combination of variables: diet + supplement + diet:supplement (interaction)#
-#i.e. check effect of diet (main); check effect of supplement (main) AND check#
-#possibility of interaction between diet and supplement on weight gain.#
-#check the assumptions: #
-autoplot(model_cow_growth, smooth.colour=NA)#
-#
-#use ANOVA to produce THE TABLE OF RESULTS: #
-table_output <- anova(model_cow_growth)#
-print(table_output)#
-#
-#output: #
-#
-#Analysis of Variance Table (sum of squares)#
-#
-#Response: gain#
-                  #Df    Sum Sq  Mean Sq   F value    Pr(>F)    #
-#diet             2    287.171    143.586    83.5201    2.999e-14 ***#
-#supplement       3     91.881     30.627    17.8150    2.952e-07 ***#
-#diet:supplement  6      3.406      0.568     0.3302      0.9166    #
-#Residuals       36     61.890      1.719                      #
-#---#
- # Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1#
-#
-#can see that the table has included a row that includes the possible#
-#interaction between diet and supplement (diet:supplement) that we specified #
-#be included by the linear model in lm(). #
-#
-#Can see that the p-value (0.9166) is not significant, #
-#therefore we cannot reject H0 and it is highly unlikely#
-#that there is an interaction between diet and supplement on cow weight gain.
-library(geomorph)
-file_list <- list.files(path = "/Users/callumbucklow/Desktop/Oxford/DPhil/Radiographs/Analysis/Hybrid Images", pattern = "\\.jpe?g$", full.names = TRUE)
-digitize2d(file_list, nlandmarks = 16, scale = 10, tpsfile = "test.tps", verbose = TRUE)
-install.packages("ggstatsplot")
-library(ggstatsplot)
-install.packages("ggstatsplot")
-rm(list=ls())require(dplyr) #for manipulation of dataframesrequire(stringr) #for useful string codesrequire(geomorph) #for geometric morphometric analysisrequire(ape)require(ggplot2)require(caper)require(Morpho)require(tidyverse)require(mvMORPH)require(phytools)require(viridis)require(rgl) #for 3D visualisationrequire(pracma) #for cross-product calculation (in calculation of kappa)require(abind)require(shapes)#import the tps file containing the coordinatescaudal <- readland.tps("Data/caudal.tps",                       specID = c("ID")) #no curves#drop Chindongo elongatus (broken neural spines)caudal <- caudal[, , !grepl("Chindongo_elongatus_", dimnames(caudal)[[3]]), drop = FALSE]#drop hybridscaudal <- caudal[, , !grepl("M_zebra_", dimnames(caudal)[[3]]), drop = FALSE]#drop Astatotilapia sp. 'Ruaha blue'caudal <- caudal[, , !grepl("Astatotilapia_sp_", dimnames(caudal)[[3]]), drop = FALSE]#keep only landmarks 1 to 17 (include haemal spine)caudal <- caudal[1:15, , , drop = FALSE]#general procrustes superimposition on all caudal coordinatesgpa_caudal <- gpagen(caudal, max.iter = 100)#extract specimen IDsspecimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen namesspecies <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#filter for unique speciesunique_species <- unique(species)#create an empty array to store species mean shapesspecies_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#loop through species and compute mean shapefor (i in seq_along(unique_species)) {  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)}#assign species names to the arraydimnames(species_means_caudal)[[3]] <- unique_species#extract specimen IDsspecimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen namesspecies <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#filter for unique speciesunique_species <- unique(species)#create an empty array to store species mean shapesspecies_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#loop through species and compute mean shapefor (i in seq_along(unique_species)) {  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.}#assign species names to the arraydimnames(species_means_caudal)[[3]] <- unique_species#correct names of dimensionsdimnames(species_means_caudal)[[3]] <- gsub("_", " ", dimnames(species_means_caudal)[[3]])#export the RDS object for other analysissaveRDS(species_means_caudal, 'Data/species_means_caudal.rds')#centroid sizes for each specimen from GPAcentroid_sizes <- gpa_caudal$Csize#create a named vector to match species names to Csizenames(centroid_sizes) <- specimen_ids#empty vector to store species mean centroid sizesspecies_mean_Csize <- numeric(length(unique_species))#loop through species and compute mean centroid sizefor (i in seq_along(unique_species)) {  species_mean_Csize[i] <- mean(centroid_sizes[species == unique_species[i]])}#assign species namesnames(species_mean_Csize) <- gsub("_", " ", unique_species)#export if neededsaveRDS(species_mean_Csize, 'Data/species_mean_Csize_caudal.rds')#import the full treetree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')#remove _ from tip labelstree$tip.label <- gsub("_", " ", tree$tip.label)#define species to keep species_to_keep <- data.frame(unique_species)species_to_keep$unique_species <- gsub("_", " ", species_to_keep$unique_species)#prune treepruned_tree <- keep.tip(tree, intersect(tree$tip.label, species_to_keep$unique_species))#import species data species_data <- read.csv('Data/species_data.csv')#remove Chindongo elongatus and Ruaha bluespecies_data <- species_data %>%  filter(!species_name %in% c("Chindongo elongatus", "Astatotilapia sp. 'Ruaha blue'"))#remove weird x column species_data <- dplyr::select(species_data, -X)#reorder dataframe to match that of the pruned phylogenyspecies_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]#import depth datadepth_data <- read.csv('Data/species_depths.csv')#add ln max depthdepth_data <-  depth_data %>%  mutate(ln_max_depth = log(depth_max))#add to species dataspecies_data <-   species_data %>%  left_join(depth_data, by='species_name')#make sure your tip labels and dimnames match exactlyspecies_order <- pruned_tree$tip.label#reorder the array and size vectorspecies_means_caudal <- species_means_caudal[,,species_order]species_mean_Csize <- species_mean_Csize[species_order]specimen_lengths <- read.csv('Data/specimen_lengths.csv')#summarise as average for each speciesspecies_specimen_lengths <- specimen_lengths %>%  dplyr::group_by(species_name) %>%  dplyr::summarise(    ln_standard_length = mean(ln_standard_length, na.rm = TRUE),    .groups = "drop"  )#run Procrustes regression at the species levelfit_species <- procD.pgls(species_means_caudal ~ log(species_mean_Csize), pruned_tree)#view resultssummary(fit_species) #yes #take the residuals of the size regression to remove size effectsshape_resid_species <- arrayspecs(residuals(fit_species),                                   p = dim(species_means_caudal)[1],                                   k = dim(species_means_caudal)[2])#rename caudal log(centroid) size residuals shape_resid_species_caudal <- shape_resid_species#import precaudal log(centroid) size residuals shape_resid_species_precaudal <- readRDS('Data/shape_resid_species_precaudal.rds')#treepruned_tree <- pruned_tree#compute per-species Euclidean distance. Here not using Procrustes distance as we are using residuals from Procrustes aligned coordinates ~ log(centroid size), i.e. residuals are taken from coordinates that have already been scaled, centred etc. nsp <- dim(shape_resid_species_caudal)[3]d <- numeric(nsp)for(i in 1:nsp){  d[i] <- sqrt(sum((shape_resid_species_caudal[,,i] - shape_resid_species_precaudal[,,i])^2))}names(d) <- dimnames(shape_resid_species_caudal)[[3]]#prepare your data frameprecaudal_caudal_procrustes_distances <- data.frame(species_name = names(d), distance = d)#append to species dataspecies_data <-   species_data %>%  left_join(precaudal_caudal_procrustes_distances, by="species_name")#create comparative data objectcomp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)#fit PGLS intercept-only model to test if mean distance differs from zeroprecaudal_caudal_procustes_distance_pgls <- pgls(distance ~ 1, data = comp_data, lambda="ML")#summarise resultssummary(precaudal_caudal_procustes_distance_pgls) #yes!#Mean shapesmean_precaudal <- mshape(shape_resid_species_precaudal)mean_caudal    <- mshape(shape_resid_species_caudal)# Mean displacement (caudal - precaudal)mean_diff <- mean_caudal - mean_precaudal# Plot vector displacementplotRefToTarget(mean_precaudal,                 mean_caudal,                 method = "vector", mag = 1)
-rm(list=ls())#
-#
-setwd('~/Desktop/Geometric Morphometrics v4')#
-#
-require(dplyr) #for manipulation of dataframes#
-require(stringr) #for useful string codes#
-require(geomorph) #for geometric morphometric analysis#
-require(ape)#
-require(ggplot2)#
-require(caper)#
-require(Morpho)#
-require(tidyverse)#
-require(mvMORPH)#
-require(phytools)#
-require(viridis)#
-require(rgl) #for 3D visualisation#
-require(pracma) #for cross-product calculation (in calculation of kappa)#
-require(abind)#
-require(shapes)#
-#
-#import the tps file containing the coordinates#
-caudal <- readland.tps("Data/caudal.tps",#
-                       specID = c("ID")) #no curves#
-#drop Chindongo elongatus (broken neural spines)#
-caudal <- caudal[, , !grepl("Chindongo_elongatus_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#drop hybrids#
-caudal <- caudal[, , !grepl("M_zebra_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#drop Astatotilapia sp. 'Ruaha blue'#
-caudal <- caudal[, , !grepl("Astatotilapia_sp_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#keep only landmarks 1 to 17 (include haemal spine)#
-caudal <- caudal[1:15, , , drop = FALSE]#
-#
-#general procrustes superimposition on all caudal coordinates#
-gpa_caudal <- gpagen(caudal, max.iter = 100)#
-#
-#extract specimen IDs#
-specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names#
-species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#
-#
-#filter for unique species#
-unique_species <- unique(species)#
-#
-#create an empty array to store species mean shapes#
-species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#
-#
-#loop through species and compute mean shape#
-for (i in seq_along(unique_species)) {#
-  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)#
-}#
-#
-#assign species names to the array#
-dimnames(species_means_caudal)[[3]] <- unique_species#
-#
-#extract specimen IDs#
-specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names#
-species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#
-#
-#filter for unique species#
-unique_species <- unique(species)#
-#
-#create an empty array to store species mean shapes#
-species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#
-#
-#loop through species and compute mean shape#
-for (i in seq_along(unique_species)) {#
-  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.#
-}#
-#
-#assign species names to the array#
-dimnames(species_means_caudal)[[3]] <- unique_species#
-#
-#correct names of dimensions#
-dimnames(species_means_caudal)[[3]] <- gsub("_", " ", dimnames(species_means_caudal)[[3]])#
-#
-#export the RDS object for other analysis#
-saveRDS(species_means_caudal, 'Data/species_means_caudal.rds')#
-#
-#centroid sizes for each specimen from GPA#
-centroid_sizes <- gpa_caudal$Csize#
-#
-#create a named vector to match species names to Csize#
-names(centroid_sizes) <- specimen_ids#
-#
-#empty vector to store species mean centroid sizes#
-species_mean_Csize <- numeric(length(unique_species))#
-#
-#loop through species and compute mean centroid size#
-for (i in seq_along(unique_species)) {#
-  species_mean_Csize[i] <- mean(centroid_sizes[species == unique_species[i]])#
-}#
-#
-#assign species names#
-names(species_mean_Csize) <- gsub("_", " ", unique_species)#
-#
-#export if needed#
-saveRDS(species_mean_Csize, 'Data/species_mean_Csize_caudal.rds')#
-#
-#import the full tree#
-tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')#
-#
-#remove _ from tip labels#
-tree$tip.label <- gsub("_", " ", tree$tip.label)#
-#
-#define species to keep #
-species_to_keep <- data.frame(unique_species)#
-species_to_keep$unique_species <- gsub("_", " ", species_to_keep$unique_species)#
-#
-#prune tree#
-pruned_tree <- keep.tip(tree, intersect(tree$tip.label, species_to_keep$unique_species))#
-#
-#import species data #
-species_data <- read.csv('Data/species_data.csv')#
-#
-#remove Chindongo elongatus and Ruaha blue#
-species_data <- species_data %>%#
-  filter(!species_name %in% c("Chindongo elongatus", "Astatotilapia sp. 'Ruaha blue'"))#
-#
-#remove weird x column #
-species_data <- dplyr::select(species_data, -X)#
-#
-#reorder dataframe to match that of the pruned phylogeny#
-species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]#
-#
-#import depth data#
-depth_data <- read.csv('Data/species_depths.csv')#
-#
-#add ln max depth#
-depth_data <-#
-  depth_data %>%#
-  mutate(ln_max_depth = log(depth_max))#
-#
-#add to species data#
-species_data <- #
-  species_data %>%#
-  left_join(depth_data, by='species_name')#
-#
-#make sure your tip labels and dimnames match exactly#
-species_order <- pruned_tree$tip.label#
-#
-#reorder the array and size vector#
-species_means_caudal <- species_means_caudal[,,species_order]#
-species_mean_Csize <- species_mean_Csize[species_order]#
-#
-specimen_lengths <- read.csv('Data/specimen_lengths.csv')#
-#
-#summarise as average for each species#
-species_specimen_lengths <- specimen_lengths %>%#
-  dplyr::group_by(species_name) %>%#
-  dplyr::summarise(#
-    ln_standard_length = mean(ln_standard_length, na.rm = TRUE),#
-    .groups = "drop"#
-  )#
-#
-#run Procrustes regression at the species level#
-fit_species <- procD.pgls(species_means_caudal ~ log(species_mean_Csize), pruned_tree)#
-#
-#view results#
-summary(fit_species) #yes #
-#
-#take the residuals of the size regression to remove size effects#
-shape_resid_species <- arrayspecs(residuals(fit_species), #
-                                  p = dim(species_means_caudal)[1], #
-                                  k = dim(species_means_caudal)[2])#
-#
-#rename caudal log(centroid) size residuals #
-shape_resid_species_caudal <- shape_resid_species#
-#
-#import precaudal log(centroid) size residuals #
-shape_resid_species_precaudal <- readRDS('Data/shape_resid_species_precaudal.rds')#
-#
-#tree#
-pruned_tree <- pruned_tree#
-#
-#compute per-species Euclidean distance. Here not using Procrustes distance as we are using residuals from Procrustes aligned coordinates ~ log(centroid size), i.e. residuals are taken from coordinates that have already been scaled, centred etc. #
-nsp <- dim(shape_resid_species_caudal)[3]#
-d <- numeric(nsp)#
-for(i in 1:nsp){#
-  d[i] <- sqrt(sum((shape_resid_species_caudal[,,i] - shape_resid_species_precaudal[,,i])^2))#
-}#
-names(d) <- dimnames(shape_resid_species_caudal)[[3]]#
-#
-#prepare your data frame#
-precaudal_caudal_procrustes_distances <- data.frame(species_name = names(d), distance = d)#
-#
-#append to species data#
-species_data <- #
-  species_data %>%#
-  left_join(precaudal_caudal_procrustes_distances, by="species_name")#
-#
-#create comparative data object#
-comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)#
-#
-#fit PGLS intercept-only model to test if mean distance differs from zero#
-precaudal_caudal_procustes_distance_pgls <- pgls(distance ~ 1, data = comp_data, lambda="ML")#
-#
-#summarise results#
-summary(precaudal_caudal_procustes_distance_pgls) #yes!#
-#
-#Mean shapes#
-mean_precaudal <- mshape(shape_resid_species_precaudal)#
-mean_caudal    <- mshape(shape_resid_species_caudal)#
-#
-# Mean displacement (caudal - precaudal)#
-mean_diff <- mean_caudal - mean_precaudal#
-#
-# Plot vector displacement#
-plotRefToTarget(mean_precaudal, #
-                mean_caudal, #
-                method = "vector", mag = 1)
-rm(list=ls())#
-#
-setwd('~/Desktop/Geometric Morphometrics v4')#
-#
-require(dplyr) #for manipulation of dataframes#
-require(stringr) #for useful string codes#
-require(geomorph) #for geometric morphometric analysis#
-require(ape)#
-require(ggplot2)#
-require(caper)#
-require(Morpho)#
-require(tidyverse)#
-require(mvMORPH)#
-require(phytools)#
-require(viridis)#
-require(rgl) #for 3D visualisation#
-require(pracma) #for cross-product calculation (in calculation of kappa)#
-require(abind)#
-require(shapes)#
-#
-#import the tps file containing the coordinates#
-caudal <- readland.tps("Data/caudal.tps",#
-                       specID = c("ID")) #no curves#
-#drop Chindongo elongatus (broken neural spines)#
-caudal <- caudal[, , !grepl("Chindongo_elongatus_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#drop hybrids#
-caudal <- caudal[, , !grepl("M_zebra_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#drop Astatotilapia sp. 'Ruaha blue'#
-caudal <- caudal[, , !grepl("Astatotilapia_sp_", dimnames(caudal)[[3]]), drop = FALSE]#
-#
-#keep only landmarks 1 to 17 (include haemal spine)#
-caudal <- caudal[1:15, , , drop = FALSE]#
-#
-#general procrustes superimposition on all caudal coordinates#
-gpa_caudal <- gpagen(caudal, max.iter = 100)#
-#
-#extract specimen IDs#
-specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names#
-species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#
-#
-#filter for unique species#
-unique_species <- unique(species)#
-#
-#create an empty array to store species mean shapes#
-species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#
-#
-#loop through species and compute mean shape#
-for (i in seq_along(unique_species)) {#
-  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)#
-}#
-#
-#assign species names to the array#
-dimnames(species_means_caudal)[[3]] <- unique_species#
-#
-#extract specimen IDs#
-specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names#
-species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species#
-#
-#filter for unique species#
-unique_species <- unique(species)#
-#
-#create an empty array to store species mean shapes#
-species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))#
-#
-#loop through species and compute mean shape#
-for (i in seq_along(unique_species)) {#
-  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.#
-}#
-#
-#assign species names to the array#
-dimnames(species_means_caudal)[[3]] <- unique_species#
-#
-#correct names of dimensions#
-dimnames(species_means_caudal)[[3]] <- gsub("_", " ", dimnames(species_means_caudal)[[3]])#
-#
-#export the RDS object for other analysis#
-saveRDS(species_means_caudal, 'Data/species_means_caudal.rds')#
-#
-#centroid sizes for each specimen from GPA#
-centroid_sizes <- gpa_caudal$Csize#
-#
-#create a named vector to match species names to Csize#
-names(centroid_sizes) <- specimen_ids#
-#
-#empty vector to store species mean centroid sizes#
-species_mean_Csize <- numeric(length(unique_species))#
-#
-#loop through species and compute mean centroid size#
-for (i in seq_along(unique_species)) {#
-  species_mean_Csize[i] <- mean(centroid_sizes[species == unique_species[i]])#
-}#
-#
-#assign species names#
-names(species_mean_Csize) <- gsub("_", " ", unique_species)#
-#
-#export if needed#
-saveRDS(species_mean_Csize, 'Data/species_mean_Csize_caudal.rds')#
-#
-#import the full tree#
-tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')#
-#
-#remove _ from tip labels#
-tree$tip.label <- gsub("_", " ", tree$tip.label)#
-#
-#define species to keep #
-species_to_keep <- data.frame(unique_species)#
-species_to_keep$unique_species <- gsub("_", " ", species_to_keep$unique_species)#
-#
-#prune tree#
-pruned_tree <- keep.tip(tree, intersect(tree$tip.label, species_to_keep$unique_species))#
-#
-#import species data #
-species_data <- read.csv('Data/species_data.csv')#
-#
-#remove Chindongo elongatus and Ruaha blue#
-species_data <- species_data %>%#
-  filter(!species_name %in% c("Chindongo elongatus", "Astatotilapia sp. 'Ruaha blue'"))#
-#
-#remove weird x column #
-species_data <- dplyr::select(species_data, -X)#
-#
-#reorder dataframe to match that of the pruned phylogeny#
-species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]#
-#
-#import depth data#
-depth_data <- read.csv('Data/species_depths.csv')#
-#
-#add ln max depth#
-depth_data <-#
-  depth_data %>%#
-  mutate(ln_max_depth = log(depth_max))#
-#
-#add to species data#
-species_data <- #
-  species_data %>%#
-  left_join(depth_data, by='species_name')#
-#
-#make sure your tip labels and dimnames match exactly#
-species_order <- pruned_tree$tip.label#
-#
-#reorder the array and size vector#
-species_means_caudal <- species_means_caudal[,,species_order]#
-species_mean_Csize <- species_mean_Csize[species_order]#
-#
-specimen_lengths <- read.csv('Data/specimen_lengths.csv')#
-#
-#summarise as average for each species#
-species_specimen_lengths <- specimen_lengths %>%#
-  dplyr::group_by(species_name) %>%#
-  dplyr::summarise(#
-    ln_standard_length = mean(ln_standard_length, na.rm = TRUE),#
-    .groups = "drop"#
-  )#
-#
-#run Procrustes regression at the species level#
-fit_species <- procD.pgls(species_means_caudal ~ log(species_mean_Csize), pruned_tree)#
-#
-#view results#
-summary(fit_species) #yes #
-#
-#take the residuals of the size regression to remove size effects#
-shape_resid_species <- arrayspecs(residuals(fit_species), #
-                                  p = dim(species_means_caudal)[1], #
-                                  k = dim(species_means_caudal)[2])#
-#
-#rename caudal log(centroid) size residuals #
-shape_resid_species_caudal <- shape_resid_species#
-#
-#import precaudal log(centroid) size residuals #
-shape_resid_species_precaudal <- readRDS('Data/shape_resid_species_precaudal.rds')#
-#
-#tree#
-pruned_tree <- pruned_tree#
-#
-#compute per-species Euclidean distance. Here not using Procrustes distance as we are using residuals from Procrustes aligned coordinates ~ log(centroid size), i.e. residuals are taken from coordinates that have already been scaled, centred etc. #
-nsp <- dim(shape_resid_species_caudal)[3]#
-d <- numeric(nsp)#
-for(i in 1:nsp){#
-  d[i] <- sqrt(sum((shape_resid_species_caudal[,,i] - shape_resid_species_precaudal[,,i])^2))#
-}#
-names(d) <- dimnames(shape_resid_species_caudal)[[3]]#
-#
-#prepare your data frame#
-precaudal_caudal_procrustes_distances <- data.frame(species_name = names(d), distance = d)#
-#
-#append to species data#
-species_data <- #
-  species_data %>%#
-  left_join(precaudal_caudal_procrustes_distances, by="species_name")#
-#
-#create comparative data object#
-comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)#
-#
-#fit PGLS intercept-only model to test if mean distance differs from zero#
-precaudal_caudal_procustes_distance_pgls <- pgls(distance ~ 1, data = comp_data, lambda="ML")#
-#
-#summarise results#
-summary(precaudal_caudal_procustes_distance_pgls) #yes!#
-#
-#Mean shapes#
-mean_precaudal <- mshape(shape_resid_species_precaudal)#
-mean_caudal    <- mshape(shape_resid_species_caudal)#
-#
-# Mean displacement (caudal - precaudal)#
-mean_diff <- mean_caudal - mean_precaudal#
-#
-# Plot vector displacement#
-plotRefToTarget(mean_precaudal, #
-                mean_caudal, #
-                method = "vector", mag = 1)
