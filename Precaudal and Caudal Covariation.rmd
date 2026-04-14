@@ -1,0 +1,510 @@
+---
+title: "Precaudal and Caudal Covariation"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(Morpho)
+require(tidyverse)
+require(mvMORPH)
+require(phytools)
+require(viridis)
+require(rgl) #for 3D visualisation
+require(pracma) #for cross-product calculation (in calculation of kappa)
+require(abind)
+require(shapes)
+```
+
+```{r Import Precaudal Data}
+
+#import the tps file containing the coordinates
+precaudal <- readland.tps("Data/precaudal.tps",
+                              specID = c("ID"),  readcurves = TRUE) #no curves
+#drop Chindongo elongatus (broken neural spines)
+precaudal <- precaudal[, , !grepl("Chindongo_elongatus_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+precaudal <- precaudal[, , !grepl("M_zebra_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop Astatotilapia sp. 'Ruaha blue'
+precaudal <- precaudal[, , !grepl("Astatotilapia_sp_", dimnames(precaudal)[[3]]), drop = FALSE]
+```
+
+```{r Import Caudal Data}
+
+#import the tps file containing the coordinates
+caudal <- readland.tps("Data/caudal.tps",
+                              specID = c("ID")) #no curves
+#drop Chindongo elongatus (broken neural spines)
+caudal <- caudal[, , !grepl("Chindongo_elongatus_", dimnames(caudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+caudal <- caudal[, , !grepl("M_zebra_", dimnames(caudal)[[3]]), drop = FALSE]
+
+#drop Astatotilapia sp. 'Ruaha blue'
+caudal <- caudal[, , !grepl("Astatotilapia_sp_", dimnames(caudal)[[3]]), drop = FALSE]
+```
+
+```{r Procrustes Superimposition on Precaudal Vertebrae}
+#define the sliding landmarks (i.e. for rib-curvature)
+#define sliding landmarks (18 to 27) with fixed landmarks at 16 and 17 -- remember we have redefined 27 (in the original landmark scheme as the tip of the rib as landmark 17 as it is fixed)
+num_sliders <- 10  # Since sliding landmarks are 18 to 27
+precaudal_sliders <- matrix(NA, nrow = num_sliders, ncol = 3)
+
+for (i in 1:num_sliders) {
+  precaudal_sliders[i, ] <- c(17 + i, 17 + i - 1, 17 + i + 1)
+}
+
+#manually adjust first and last row of the matrix:
+precaudal_sliders[1, ] <- c(18, 16, 19)
+precaudal_sliders[10, ] <- c(27, 26, 17)
+
+#general procrustes superimposition on all caudal coordinates
+gpa_precaudal <- gpagen(precaudal, curves = precaudal_sliders, max.iter = 100, ProcD = FALSE) #FALSE here minimises bending energy
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_precaudal <- array(NA, dim = c(dim(gpa_precaudal$coords)[1], dim(gpa_precaudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_precaudal[,,i] <- mshape(gpa_precaudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)
+}
+
+#assign species names to the array
+dimnames(species_means_precaudal)[[3]] <- unique_species
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_precaudal <- array(NA, dim = c(dim(gpa_precaudal$coords)[1], dim(gpa_precaudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_precaudal[,,i] <- mshape(gpa_precaudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.
+}
+
+#assign species names to the array
+dimnames(species_means_precaudal)[[3]] <- unique_species
+
+#correct names of dimensions
+dimnames(species_means_precaudal)[[3]] <- gsub("_", " ", dimnames(species_means_precaudal)[[3]])
+```
+
+```{r Procrustes Superimposition on Caudal Vertebrae}
+#general procrustes superimposition on all caudal coordinates
+gpa_caudal <- gpagen(caudal, max.iter = 100)
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)
+}
+
+#assign species names to the array
+dimnames(species_means_caudal)[[3]] <- unique_species
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_caudal <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_caudal[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.
+}
+
+#assign species names to the array
+dimnames(species_means_caudal)[[3]] <- unique_species
+
+#correct names of dimensions
+dimnames(species_means_caudal)[[3]] <- gsub("_", " ", dimnames(species_means_caudal)[[3]])
+```
+
+```{r Extract Centroid Sizes (Precaudal)}
+
+#centroid sizes for each specimen from GPA
+centroid_sizes_precaudal <- gpa_precaudal$Csize
+
+#create a named vector to match species names to Csize
+names(centroid_sizes_precaudal) <- specimen_ids
+
+#empty vector to store species mean centroid sizes
+species_mean_Csize_precaudal <- numeric(length(unique_species))
+
+#loop through species and compute mean centroid size
+for (i in seq_along(unique_species)) {
+  species_mean_Csize_precaudal[i] <- mean(centroid_sizes_precaudal[species == unique_species[i]])
+}
+
+#assign species names
+names(species_mean_Csize_precaudal) <- gsub("_", " ", unique_species)
+```
+
+```{r Extract Centroid Sizes (Caudal)}
+
+#centroid sizes for each specimen from GPA
+centroid_sizes_caudal <- gpa_caudal$Csize
+
+#create a named vector to match species names to Csize
+names(centroid_sizes_caudal) <- specimen_ids
+
+#empty vector to store species mean centroid sizes
+species_mean_Csize_caudal <- numeric(length(unique_species))
+
+#loop through species and compute mean centroid size
+for (i in seq_along(unique_species)) {
+  species_mean_Csize_caudal[i] <- mean(centroid_sizes_caudal[species == unique_species[i]])
+}
+
+#assign species names
+names(species_mean_Csize_caudal) <- gsub("_", " ", unique_species)
+```
+
+```{r Import and Prune Tree}
+#import the full tree
+tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
+
+#remove _ from tip labels
+tree$tip.label <- gsub("_", " ", tree$tip.label)
+
+#define species to keep 
+species_to_keep <- data.frame(unique_species)
+species_to_keep$unique_species <- gsub("_", " ", species_to_keep$unique_species)
+
+#prune tree
+pruned_tree <- keep.tip(tree, intersect(tree$tip.label, species_to_keep$unique_species))
+```
+
+```{r Import Species Data}
+
+#import species data 
+species_data <- read.csv('Data/species_data.csv')
+
+#remove Chindongo elongatus and Ruaha blue
+species_data <- species_data %>%
+  filter(!species_name %in% c("Chindongo elongatus", "Astatotilapia sp. 'Ruaha blue'"))
+
+#remove weird x column 
+species_data <- dplyr::select(species_data, -X)
+
+#reorder dataframe to match that of the pruned phylogeny
+species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]
+```
+
+```{r Rearrange Vectors to Match Tip Order}
+#make sure your tip labels and dimnames match exactly
+species_order <- pruned_tree$tip.label
+
+#reorder the array and size vector
+species_means_precaudal <- species_means_precaudal[,,species_order]
+species_means_caudal <- species_means_caudal[,,species_order]
+species_mean_Csize_precaudal <- species_mean_Csize_precaudal[species_order]
+species_mean_Csize_caudal <- species_mean_Csize_caudal[species_order]
+```
+
+```{r Extract log(Centroid Size) Shape Residuals (Precaudal)}
+#run Procrustes regression at the species level
+fit_species_precaudal <- procD.pgls(species_means_precaudal ~ log(species_mean_Csize_precaudal), pruned_tree, iter=9999, seed = 1931)
+
+#view results
+summary(fit_species_precaudal) #yes 
+
+#take the residuals of the size regression to remove size effects
+shape_resid_species_precaudal <- arrayspecs(residuals(fit_species_precaudal), 
+                                  p = dim(species_means_precaudal)[1], 
+                                  k = dim(species_means_precaudal)[2])
+
+#rearrange so that landmarks are better ordered
+#correct_order <- c(1:15, 16, 18:27, 17) #import for visualisation downstream
+#shape_resid_species_precaudal <- shape_resid_species_precaudal[correct_order, , ]
+```
+
+```{r Extract log(Centroid Size) Shape Residuals (Caudal)}
+#run Procrustes regression at the species level
+fit_species_caudal <- procD.pgls(species_means_caudal ~ log(species_mean_Csize_caudal), pruned_tree, iter=9999, seed = 1931)
+
+#view results
+summary(fit_species_caudal) #yes 
+
+#take the residuals of the size regression to remove size effects
+shape_resid_species_caudal <- arrayspecs(residuals(fit_species_caudal), 
+                                  p = dim(species_means_caudal)[1], 
+                                  k = dim(species_means_caudal)[2])
+```
+
+# Precaudal and Caudal Shape Covariation
+
+```{r Phylogenetic Two Block - PLS}
+#run phylogenetic two-block PLS
+pls_res <- phylo.integration(A = shape_resid_species_precaudal, #x
+                             A2 = shape_resid_species_caudal, #y
+                             phy = pruned_tree, 
+                             iter = 99999, #permutations (actually 100000)
+                           seed=1931) #set seed to get same p-value each time
+pls_res
+
+#percentage covariance represented by each PLS axis...
+sv <- pls_res$svd$d     #singular values
+total_cov <- sum(sv^2)     #total cross-covariance
+prop_cov <- (sv^2) / total_cov * 100
+prop_cov #percentage per axis
+```
+
+```{r}
+#extract PLS scores for block 1 (e.g., ribs)
+precaudal_scores <- pls_res$XScores  # rows = species, columns = PLS axes
+
+#extract PLS scores for block 2 (e.g., vertebrae)
+caudal_scores <- pls_res$YScores
+
+#create dataframe of PLS scores (keep PLS1 and PLS2) -- PLS2 probably not required
+pls_scores_df <- data.frame(
+  species_name = rownames(pls_res$XScores),
+  precaudal_PLS1 = precaudal_scores[, 1],
+  precaudal_PLS2 = precaudal_scores[, 2],
+  caudal_PLS1 = caudal_scores[, 1],
+  caudal_PLS2 = caudal_scores[, 2]
+)
+
+#append to species_data
+species_data <- 
+  species_data %>%
+  left_join(pls_scores_df, by='species_name')
+
+#PLS1
+
+#plot the X (rib) and Y (precaudal vertebrae) scores for PLS1 for each species
+a1 <- ggplot(species_data, aes(x=precaudal_PLS1, y=caudal_PLS1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="red", linetype='dashed')+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("Precaudal (PLS1 - Block X)")+
+  ylab("Caudal (PLS1 - Block Y)")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a1
+
+ggsave("Figures/pls1_precaudal_and_caudal.svg", a1, height=5, width=5)
+
+#PLS2
+
+#plot the X (precaudal) and Y (caudal vertebrae) scores for PLS2 for each species
+ggplot(species_data, aes(x=precaudal_PLS2, y=caudal_PLS2))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="red", linetype='dashed')+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+ xlab("Precaudal (PLS2 - Block X)")+
+  ylab("Caudal (PLS2 - Block Y)")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+
+#run correlation tests for the 2 axes
+pvals <- sapply(1:2, function(i) {
+  test <- cor.test(precaudal_scores[, i], caudal_scores[, i])
+  c(r = unname(test$estimate),
+    p = test$p.value)
+})
+pvals
+```
+
+```{r Define Links for Visualisation}
+#will connect landmarks with lines to make visualisation easier
+links_precaudal <- rbind(
+  c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8),
+  c(16, 18),
+  c(18, 19),
+  c(19, 20),
+  c(20, 21),
+  c(21, 22),
+  c(22, 23),
+  c(23, 24),
+  c(24, 25),
+  c(25, 26),
+  c(26, 27),
+  c(27, 17))
+
+links_caudal <- rbind(
+   c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8),
+  c(16, 17)
+)
+```
+
+```{r}
+#extract the loadings for the ribs and vertebrae for PLS1
+#number of loadings is n*3, where n is the number of landmarks. 3 comes from x, y, z. 
+pls1_precaudal <- pls_res$left.pls.vectors[, 1] #
+pls1_caudal <- pls_res$right.pls.vectors[, 1]
+
+#reshape
+n_landmarks_precaudal <- dim(shape_resid_species_precaudal)[1]
+n_landmarks_caudal <- dim(shape_resid_species_caudal)[1]
+
+#convert to matrix (represents landmark and axes displacement along PLS1)
+pls1_precaudal_matrix <- matrix(pls1_precaudal, ncol = 3, byrow = TRUE)
+pls1_caudal_matrix <- matrix(pls1_caudal, ncol = 3, byrow = TRUE)
+
+#calculate mean shape for ribs and precaudal vertebrae (i.e. grand mean)
+mean_precaudal <- apply(species_means_precaudal, c(1, 2), mean)
+mean_caudal <- apply(species_means_caudal, c(1, 2), mean)
+
+#define a scale factor to emphasise the shape change
+scale_factor <- 0.25 
+
+#calculate deformation relative to the mean shape
+#precaudal
+shape_precaudal_low  <- mean_precaudal - scale_factor * pls1_precaudal_matrix
+shape_precaudal_high <- mean_precaudal + scale_factor * pls1_precaudal_matrix
+
+#caudal
+shape_caudal_low  <- mean_caudal - scale_factor * pls1_caudal_matrix
+shape_caudal_high <- mean_caudal + scale_factor * pls1_caudal_matrix
+
+
+#plot low and high (precaudal)
+plotRefToTarget(shape_precaudal_low, shape_precaudal_high, method="points", mag = 0.5, label = FALSE, axes = FALSE, links=links_precaudal, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2, tar.pt.size=0.50))
+
+#plot low and high (caudal)
+plotRefToTarget(shape_caudal_low, shape_caudal_high, method="points", mag = 0.5, label = FALSE, axes = FALSE, links=links_caudal,gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2, tar.pt.size=0.50))
+```
+
+```{r Does the Shape Covariation Correlate with Body Elongation?}
+
+#calculate a shared PLS1 value by scaling and averaging the block scores
+species_data <- 
+  species_data %>%
+  mutate(scaled_precaudal_PLS1 = scale(precaudal_PLS1),
+         scaled_caudal_PLS1 = scale(caudal_PLS1), #the rib and vert PLS1 scores are on different scales, so simply averging them would favour the block with the wider scale
+         shared_scaled_PLS1 = (scaled_precaudal_PLS1 + scaled_caudal_PLS1)/2) #take the average score between the two scaled block scores. Will represent Z scores of covariation. 
+
+#create comparative data object 
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit pgls model
+pls1_shared_elongation_pgls <- pgls(shared_scaled_PLS1 ~ ln_length_ln_width, data = comp_data, lambda = "ML")
+
+#summarise the model fit
+summary(pls1_shared_elongation_pgls)
+```
+
+```{r Plot Composite PLS1 Scores against Body Aspect Ratio}
+
+a3 <- ggplot(species_data, aes(x=ln_length_ln_width, y=shared_scaled_PLS1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = pls1_shared_elongation_pgls$model$coef[[1]], 
+              slope = pls1_shared_elongation_pgls$model$coef[[2]], 
+              size = 0.75, colour = 'red', linetype = 'dashed')+ #PGLS is red, lambda is zero. no point plotting OLS model
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("ln[Length]-ln[Depth]")+
+  ylab("Composite PLS1 score (Precaudal–Caudal)")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a3
+
+ggsave("Figures/pls1_covariation_elongation.svg", a3, height=5, width=10)
+```

@@ -1,0 +1,428 @@
+---
+title: "Centrum Aspect Ratios and IVDs"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #data wrangling
+require(stringr) #useful string manipulation
+require(ggplot2) #data visualisation and plotting
+require(ape) #phylogenetic tree plotting and manipulation
+require(caper) #phylogenetic generalised least squares (PGLS) regression
+require(phytools) #phylogenetic ANOVA
+require(phyr) #for phylogenetic linear mixed model
+```
+
+```{r Import Data}
+#centrum aspect ratios
+cars <- read.csv('Data/vertebral_aspect_ratios.csv')
+
+#import intervertebral distances
+ivds <- read.csv('Data/intervertebral_distances.csv')
+
+#import specimen lengths
+specimen_lengths <- read.csv('Data/specimen_lengths.csv')
+
+#import all species data
+species_data <- read.csv("Data/species_data.csv")
+```
+
+```{r Summarise Vertebral Aspect Ratio}
+#calculate species averages regardless of caudal or precaudal
+cars_species <- cars %>%
+  group_by(species_name) %>%
+  summarise(
+    mean_car_raw = mean(raw_aspect_ratio, na.rm = TRUE),
+    mean_car_log = mean(ln_length_ln_width, na.rm = TRUE)
+  ) %>%
+  mutate(species_name = gsub("_", " ", species_name))
+```
+
+```{r Summarise IVDs}
+#calculate species averages regardless of caudal or precaudal
+ivds <- 
+  ivds %>%
+  mutate(mean_ivd = (precaudal_intervertebral_distance + caudal_intervertebral_distance)/2)
+
+#calculate species mean              
+ivds_species <- 
+  ivds %>%
+  group_by(species_name) %>%
+  summarise(mean_ivd = mean(mean_ivd) )%>%
+  mutate(species_name = gsub("_", " ", species_name))
+```
+
+```{r Summarise Specimen Lengths}
+#calculate average specimen length (we have multiple D macrops A. calli specimens)
+species_lengths <- 
+  specimen_lengths %>%
+  group_by(species_name) %>%
+  summarise(ln_standard_length = mean(ln_standard_length)) %>%
+  mutate(species_name = gsub("_", " ", species_name))
+```
+
+```{r Prepare Species Data}
+#append centrum aspect ratios and IVDs to the species data
+species_data <-
+  species_data %>%
+  dplyr::filter(species_name != "Astatotilapia sp. 'Ruaha blue'") %>%
+  dplyr::select(-X) %>%
+  left_join(ivds_species, by='species_name') %>%
+  left_join(cars_species, by='species_name') %>%
+  left_join(species_lengths, by='species_name') %>%
+  mutate(scaled_IVD = mean_ivd - ln_standard_length) #ratio, both are log transformed so subtract
+```
+
+```{r Tree Pruning and Data Subsetting}
+#specify tree
+tree <- read.tree('Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
+
+#sort out tip labels of the tree
+tree$tip.label <- gsub('_', " ", tree$tip.label)
+
+#prune the phylogenetic tree
+pruned_tree <- keep.tip(tree, species_data$species_name)
+
+#reorder dataframe so that species order matches order of phylogeny tips
+species_data <- 
+  species_data %>%
+  arrange(match(species_name, pruned_tree$tip.label))
+```
+
+```{r Construct VCV Matrix for Downstream Analysis}
+#construct the variance-covariance (VCV) matrix:
+vcv_matrix <- caper::comparative.data(pruned_tree, species_data, species_name, vcv=TRUE, vcv.dim=3)
+```
+
+```{r Check Scaling of IVD and Specimen Length}
+#fit pgls model (IVD ~ specimen_length) - check scaling
+ivd_length <- pgls(mean_ivd ~ ln_standard_length, data = vcv_matrix, lambda = "ML")
+
+#summarise the model
+summary(ivd_length) #IVD scales with length, slope may be greater than 1 suggesting positive allometry but I don't really believe it. 
+
+#fit pgls model with the scaled IVD instead... residual scaling?
+ivd_length_scaled <- pgls(scaled_IVD ~ ln_standard_length, data = vcv_matrix, lambda = "ML")
+
+#summarise the model
+summary(ivd_length_scaled)
+```
+
+```{r Define Function to Compute PICs}
+#define function to compute pics for all traits in the all species matrix data
+compute_pic <- function(matrix_data, tree) {
+  #initialize a list to store PIC results
+  pic_results <- list()
+  
+  #get column names
+  col_names <- colnames(matrix_data)
+  
+  #compute PIC for each trait
+  for (i in seq_along(col_names)) {
+    pic_results[[col_names[i]]] <- ape::pic(matrix_data[, i], tree)
+  }
+  
+  #convert results to a dataframe
+  pic_df <- as.data.frame(do.call(cbind, pic_results))
+  
+  #add node labels
+  pic_df$node <- rownames(pic_df)
+  
+  return(pic_df)
+}
+```
+
+```{r Calculate PICs for Traits}
+
+#list of trait column names in your dataframe
+traits <- c("total_count", "ln_length_ln_width", "scaled_IVD", "mean_car_log")
+
+#initialize an empty list to store named vectors
+trait_vectors <- list()
+
+#loop over traits and create named vectors
+for(tr in traits){
+  vec <- species_data[[tr]]           # extract column
+  names(vec) <- species_data$species_name  # assign names
+  trait_vectors[[tr]] <- vec          # store in list
+}
+
+#calculate PICs
+pic_list <- lapply(trait_vectors, function(tr) pic(tr, pruned_tree))
+```
+
+```{r Comparison of PGLS Models (ln[Length]-ln[Width])}
+#fit pgls model (body aspect ratio ~ total count + scaled_IVD + centrum aspect ratio)
+bar_full <- pgls(ln_length_ln_width ~ total_count + scaled_IVD + mean_car_log, data = vcv_matrix, lambda = "ML")
+
+#summarise the model
+summary(bar_full) # aicc = -81.87937
+
+#fit pgls model for total count alone
+bar_tc <- pgls(ln_length_ln_width ~ total_count, data = vcv_matrix, lambda = "ML")
+
+#summarise the model
+summary(bar_tc) # aicc = -85.88898
+  
+#calculate delta AICc
+bar_tc$aicc - bar_full$aicc #-4.009609 #model with total count ivd and centrum aspect ratios considerably worse fit than total count alone
+```
+
+```{r Calculate Partial Regression Residuals}
+
+#define lambda from full model
+lambda <- bar_full$param[2]
+
+#total_count (lambda is fixed to that estimated in full model so that vcov is maintained)
+resid_response_tc <- residuals(pgls(ln_length_ln_width ~ scaled_IVD + mean_car_log,
+                                    data = vcv_matrix, lambda = lambda))
+resid_predictor_tc <- residuals(pgls(total_count ~ scaled_IVD + mean_car_log,
+                                     data = vcv_matrix, lambda = lambda))
+
+#scaled_IVD
+resid_response_scaled_ivd <- residuals(pgls(ln_length_ln_width ~ total_count + mean_car_log,
+                                            data = vcv_matrix, lambda = lambda))
+resid_predictor_scaled_ivd <- residuals(pgls(scaled_IVD ~ total_count + mean_car_log,
+                                             data = vcv_matrix, lambda = lambda))
+
+#mean_car_log
+resid_response_car <- residuals(pgls(ln_length_ln_width ~ total_count + scaled_IVD,
+                                     data = vcv_matrix, lambda = lambda))
+resid_predictor_car <- residuals(pgls(mean_car_log ~ total_count + scaled_IVD,
+                                      data = vcv_matrix, lambda = lambda))
+
+#assemble residuals into a dataframe
+df_partial <- bind_rows(
+  data.frame(predictor = "total_count",
+             x = resid_predictor_tc,
+             y = resid_response_tc),
+  data.frame(predictor = "scaled_IVD",
+             x = resid_predictor_scaled_ivd,
+             y = resid_response_scaled_ivd),
+  data.frame(predictor = "mean_car_log",
+             x = resid_predictor_car,
+             y = resid_response_car)
+)
+df_partial$predictor <- factor(df_partial$predictor, 
+                               levels = c("total_count", "scaled_IVD", "mean_car_log"))
+
+#add species names column
+df_partial$species_name <- rownames(df_partial)
+df_partial$species_name <- sub("\\.\\.\\..*$", "", df_partial$species_name)
+#add ecomorphology information
+lm_ecology <- 
+  species_data %>%
+  dplyr::select(species_name, lm_ecology)
+#append to data
+df_partial <- 
+  df_partial %>%
+  left_join(lm_ecology, by='species_name')
+```
+
+```{r Calculate Partial Regression Coefficients}
+
+#partial r for total_count
+r_tc <- cor(resid_predictor_tc, resid_response_tc)
+r_tc
+
+#partial r for scaled_IVD
+r_ivd <- cor(resid_predictor_scaled_ivd, resid_response_scaled_ivd)
+r_ivd
+
+#partial r for mean_car_log
+r_car <- cor(resid_predictor_car, resid_response_car)
+r_car
+```
+
+```{r Plot Partial Regressions}
+
+#order facets for better plotting
+df_partial$predictor <- factor(df_partial$predictor, 
+                               levels = c("total_count", "mean_car_log", "scaled_IVD"))
+
+#plot partial regressions
+a1 <- ggplot(df_partial, aes(x = x, y = y))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 3, colour = "black")+
+  geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula=y~x, se = FALSE, colour = "red", linetype='dashed')+
+  facet_wrap(~predictor, scales = "free_x"
+             )+
+  labs(x = "Partial Predictor", y = "Partial ln[Length] - ln[Width]")+
+   scale_fill_manual(values = c("Astatotilapia" = "#E87D72", 
+                                "not_applicable" = "#E87D72", 
+                                "Rhamphochromis" = "#51B3E6",
+                                "Diplotaxodon" = "grey",
+                                "Deep Benthic" = "#BD9C33",
+                                "Shallow Benthic" = "#A18BF8",
+                                "Utaka" = "#FC61D7",
+                                "Mbuna" = "#00C095"))+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14),
+        strip.text = element_blank()) #remove labels for facets, I can make nicer labels. Far left: Total Count, middle is centrum aspect ratio and right is scaled IVD.
+a1
+
+ggsave('Figures/partial_regression_body_aspect_ratio.svg', a1, height=5, width=10)
+```
+Testing Lake Malawi Slope versus Whole Subfamily
+
+```{r Import Data for Whole Subfamily}
+
+all_species_data <- readRDS('Data/bucklowetal2025.rds')
+
+```
+
+```{r Data Wrangling}
+
+#convert data matrix into a dataframe
+all_species_df <- as.data.frame(all_species_data$matrix_data)
+all_species_df$species_name <- rownames(all_species_df)
+
+#define a two groups... one for the LM species in above dataset and for the rest of the species of the subfamily
+all_species_df <- all_species_df %>%
+  mutate(lm_subset = ifelse(species_name %in% species_data$species_name, 
+                            "lM_subset", 
+                            "other"))
+```
+
+```{r Fit PGLS model to test whether slopes are different}
+
+#define new vcv matrix
+new_vcv <- caper::comparative.data(all_species_data$tree, all_species_df, species_name, vcv=TRUE, vcv.dim=3)
+
+#fit an pgls interaction model with lm_subset as the interaction (i.e. are the slopes different between this subset and the wider subfamily?)
+comparison_model <- caper::pgls(ln_length_ln_width ~ total_count * lm_subset, 
+              data = new_vcv, lambda = 'ML')
+
+summary(comparison_model) #interaction term is not significant, therefore slopes between lake malawi and wider family are not different. Effect of adding vertebrae in LM is roughly the same as the wider subfamily
+```
+
+# Precaudal and Caudal Centrum Aspect Ratios
+
+```{r Precaudal and Caudal Aspect Ratios Different?}
+
+cars_pc_c <- 
+  cars %>%
+  group_by(species_name, domain) %>%
+  summarise(ln_length_ln_width = mean(ln_length_ln_width))
+
+cars_pc_c <- cars_pc_c %>%
+  mutate(
+    domain = ifelse(domain == "precaudal", "Precaudal",
+             ifelse(domain == "caudal", "Caudal", domain)),
+    domain = factor(domain, levels = c("Precaudal", "Caudal"))
+  )
+
+
+
+cars_pc_c <- cars_pc_c %>%
+  mutate(highlight = case_when(
+    species_name == "Chindongo_elongatus" ~ "Chindongo", #most elongate centra
+    species_name == "Rhamphochromis_longiceps" ~ "Rhampho", #least elongate centra
+    species_name == "Nimbochromis_polystigma" ~ "Nimbo", #roughly average
+    TRUE ~ "Other"
+  ))
+
+a1 <- ggplot(cars_pc_c, aes(x = domain, y = ln_length_ln_width)) +
+  geom_boxplot(width = 0.33, outlier.shape = NA) +
+
+  geom_line(aes(group = species_name,
+                colour = highlight,
+                linewidth = highlight,
+                alpha = highlight)) +
+
+  geom_point(aes(group = species_name,
+                 colour = highlight,
+                 size = highlight,
+                 alpha = highlight)) +
+
+  stat_summary(fun = mean, geom = "point", shape = 8, size = 5, colour = "red") +
+
+  scale_colour_manual(values = c(
+    "Chindongo" = "#00C095",
+    "Rhampho"   = "#51B3E6",
+    "Nimbo"     = "#A18BF8",
+    "Other"     = "black"
+  )) +
+
+  scale_size_manual(values = c(
+    "Chindongo" = 2,
+    "Rhampho"   = 2,
+    "Nimbo"     = 2,
+    "Other"     = 1
+  )) +
+
+  scale_linewidth_manual(values = c(
+    "Chindongo" = 1,
+    "Rhampho"   = 1,
+    "Nimbo"     = 1,
+    "Other"     = 0.4
+  )) +
+
+  scale_alpha_manual(values = c(
+    "Chindongo" = 1,
+    "Rhampho"   = 1,
+    "Nimbo"     = 1,
+    "Other"     = 0.4
+  )) +
+
+  xlab('Vertebral Identity') +
+  ylab('ln[Centrum Aspect Ratio]') +
+  theme_classic()+
+  theme(legend.position = "none", 
+        axis.text = element_text(size = 16), 
+        axis.title = element_text(size = 16, face = "bold"), 
+        axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=16))
+
+a1
+
+ggsave("Figures/precaudal_caudal_centrum_aspect_ratios.svg", dpi=2000, a1, height = 5, width = 6)
+```
+
+```{r Phylogenetic mixed model to test shape differences are consistent within species}
+#need to test whether differences are consistent across species and within them, probably best to do a phylogenetic mixed model?
+#centrum aspect ratio ~ domain + (1 | species), where species is a random effect. If both significant, then differences are consistent across the radiation and within species
+
+#quick t-test to check differences are significant overall
+cars_pc_c_wide <- cars_pc_c %>%
+  pivot_wider(
+    names_from = domain,
+    values_from = ln_length_ln_width
+  )
+
+t.test(cars_pc_c_wide$Precaudal, cars_pc_c_wide$Caudal, paired=TRUE) #p-value = 4.425e-12
+
+#clean up the data
+cars_pc_c$species_name <- gsub("_", " ", cars_pc_c$species_name)
+
+#filter and reorder dataframe according to the phylogeny
+cars_pc_c <- cars_pc_c %>%
+  filter(species_name %in% pruned_tree$tip.label) %>%
+  arrange(match(species_name, pruned_tree$tip.label))
+
+#factorise the species name for pglmm (for some reason)
+cars_pc_c$species_name <- as.factor(cars_pc_c$species_name)
+
+#phylogenetic covariance matrix
+A <- ape::vcv.phylo(pruned_tree)
+
+#fit linear mixed model
+plmm_pc_c_car <- pglmm(
+  formula = ln_length_ln_width ~ domain + (1 | species_name__),
+  data = cars_pc_c,
+  family = "gaussian",
+  cov_ranef = list(species_name = A)
+)
+
+summary(plmm_pc_c_car)
+
+packageVersion("ape")
+```

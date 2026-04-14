@@ -1,0 +1,805 @@
+---
+title: "Precaudal Geometric Morphometrics"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(Morpho)
+require(tidyverse)
+require(mvMORPH)
+require(phytools)
+require(viridis)
+require(rgl) #for 3D visualisation
+require(pracma) #for cross-product calculation (in calculation of kappa)
+require(abind)
+require(shapes)
+```
+
+```{r Import Precaudal Data}
+
+#import the tps file containing the coordinates
+precaudal <- readland.tps("Data/precaudal.tps",
+                              specID = c("ID")) #no curves
+#drop Chindongo elongatus (broken neural spines)
+precaudal <- precaudal[, , !grepl("Chindongo_elongatus_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+precaudal <- precaudal[, , !grepl("M_zebra_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop Astatotilapia sp. 'Ruaha blue'
+precaudal <- precaudal[, , !grepl("Astatotilapia_sp_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#keep only landmarks 1 to 15
+precaudal <- precaudal[1:15, , , drop = FALSE]
+```
+
+```{r Import Length Data}
+
+specimen_lengths <- read.csv('Data/specimen_lengths.csv')
+
+#summarise as average for each species
+species_specimen_lengths <- specimen_lengths %>%
+  dplyr::group_by(species_name) %>%
+  dplyr::summarise(
+    ln_standard_length = mean(ln_standard_length, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r Procrustes Superimposition on Precaudal Vertebrae}
+#general procrustes superimposition on all precaudal coordinates
+gpa_precaudal <- gpagen(precaudal, max.iter = 100)
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_precaudal <- array(NA, dim = c(dim(gpa_precaudal$coords)[1], dim(gpa_precaudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_precaudal[,,i] <- mshape(gpa_precaudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens. This step is important because there are multiple vertebrae for each specimen AND we have multiple specimens for Astatotilapia calliptera and for Diplotaxodon macrops (so for these two the average is the mean of 12 and 6 vertebrae, respectively)
+}
+
+#assign species names to the array
+dimnames(species_means_precaudal)[[3]] <- unique_species
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means_precaudal <- array(NA, dim = c(dim(gpa_precaudal$coords)[1], dim(gpa_precaudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means_precaudal[,,i] <- mshape(gpa_precaudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.
+}
+
+#assign species names to the array
+dimnames(species_means_precaudal)[[3]] <- unique_species
+
+#correct names of dimensions
+dimnames(species_means_precaudal)[[3]] <- gsub("_", " ", dimnames(species_means_precaudal)[[3]])
+
+#export the RDS object for other analysis
+saveRDS(species_means_precaudal, 'Data/species_means_precaudal.rds')
+```
+
+```{r Extract Centroid Sizes}
+
+#centroid sizes for each specimen from GPA
+centroid_sizes <- gpa_precaudal$Csize
+
+#create a named vector to match species names to Csize
+names(centroid_sizes) <- specimen_ids
+
+#empty vector to store species mean centroid sizes
+species_mean_Csize <- numeric(length(unique_species))
+
+#loop through species and compute mean centroid size
+for (i in seq_along(unique_species)) {
+  species_mean_Csize[i] <- mean(centroid_sizes[species == unique_species[i]])
+}
+
+#assign species names
+names(species_mean_Csize) <- gsub("_", " ", unique_species)
+
+#export if needed
+saveRDS(species_mean_Csize, 'Data/species_mean_Csize_precaudal.rds')
+
+```
+
+```{r Import and Prune Tree}
+#import the full tree
+tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
+
+#remove _ from tip labels
+tree$tip.label <- gsub("_", " ", tree$tip.label)
+
+#define species to keep 
+species_to_keep <- data.frame(unique_species)
+species_to_keep$unique_species <- gsub("_", " ", species_to_keep$unique_species)
+
+#prune tree
+pruned_tree <- keep.tip(tree, intersect(tree$tip.label, species_to_keep$unique_species))
+```
+
+```{r Import Species Data}
+
+#import species data 
+species_data <- read.csv('Data/species_data.csv')
+
+#remove Chindongo elongatus and Ruaha blue
+species_data <- species_data %>%
+  filter(!species_name %in% c("Chindongo elongatus", "Astatotilapia sp. 'Ruaha blue'"))
+
+#remove weird x column 
+species_data <- dplyr::select(species_data, -X)
+
+#reorder dataframe to match that of the pruned phylogeny
+species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]
+```
+
+```{r Rearrange Vectors to Match Tip Order}
+#make sure your tip labels and dimnames match exactly
+species_order <- pruned_tree$tip.label
+
+#reorder the array and size vector
+species_means_precaudal <- species_means_precaudal[,,species_order]
+species_mean_Csize <- species_mean_Csize[species_order]
+```
+
+```{r Is Shape Allometrically Scaling?}
+#run Procrustes regression at the species level
+fit_species <- procD.pgls(species_means_precaudal ~ log(species_mean_Csize), pruned_tree)
+
+#view results
+summary(fit_species) #yes 
+
+#take the residuals of the size regression to remove size effects
+shape_resid_species <- arrayspecs(residuals(fit_species), 
+                                  p = dim(species_means_precaudal)[1], 
+                                  k = dim(species_means_precaudal)[2])
+
+#export the size corrected residuals for precaudal shape variation
+saveRDS(shape_resid_species, "Data/shape_resid_species_precaudal.rds")
+```
+
+```{r Non-Phylogenetic PCA on Size-Corrected Residuals}
+
+#run non-phylogenetic PCA on size-corrected shape residuals
+precaudal_pca <- gm.prcomp(shape_resid_species)
+summary(precaudal_pca)
+
+#convert PC scores to dataframe
+pca_precaudal_scores <- data.frame(precaudal_pca$x)
+
+#keep on first five PCs (86.12%)
+pca_precaudal_scores <-
+  pca_precaudal_scores %>%
+  dplyr::select(precaudal_PC1 = Comp1, 
+                precaudal_PC2 = Comp2, 
+                precaudal_PC3 = Comp3, 
+                precaudal_PC4 = Comp4, 
+                precaudal_PC5 = Comp5)
+pca_precaudal_scores$species_name <- rownames(precaudal_pca$x)
+
+#bind to species data
+species_data <- 
+  species_data %>%
+  left_join(pca_precaudal_scores, by='species_name')
+
+species_data
+
+#bind the standard lengths as well
+species_data <- species_data %>%
+  left_join(species_specimen_lengths %>%
+              dplyr::select(species_name, ln_standard_length),
+            by = "species_name")
+
+species_data
+```
+
+```{r Define Function to Extract Most Influential Coordinates}
+#function will identify and extract the top ten coordinates (X,Y,Z), and associated landmarks (1-27), contributing to each defined PC.
+extract_top_contributors <- function(pca_object, num_pcs = 5, top_n = 5) {
+  #define number of landmarks and coordinate system
+  num_landmarks <- 15  #15 shared landmarks
+  num_coords <- 3  #X,Y,Z
+  
+  #generate landmark and coordinate mapping
+  landmark_indices <- rep(1:num_landmarks, each = num_coords)
+  coordinates <- rep(c("X", "Y", "Z"), times = num_landmarks)
+  
+  #initialize a list to store results
+  results <- list()
+  
+  for (pc in 1:num_pcs) {
+    #extract loadings for the current PC
+    pc_loadings <- pca_object$rotation[, pc]
+    abs_pc_loadings <- abs(pc_loadings) #using absolute to capture both positive and negative loadings 
+    
+    #sort by order of magnitude (regardless of +ve or -ve loading)
+    sorted_indices <- order(abs_pc_loadings, decreasing = TRUE)
+    
+    #extract top coordinates according to absolute loading, number is defined above (top_n) 
+    top_contributors <- sorted_indices[1:top_n]
+    
+    #assemble results into a dataframe for easy view
+    pc_df <- data.frame(
+      PC = rep(pc, top_n),
+      landmark = landmark_indices[top_contributors],
+      coordinate = coordinates[top_contributors],
+      loading = pc_loadings[top_contributors],
+      absolute_loading = abs_pc_loadings[top_contributors]
+    )
+    
+    #store in results list
+    results[[paste0("PC", pc)]] <- pc_df
+  }
+  
+  #combine into a single dataframe
+  final_df <- do.call(rbind, results)
+  return(final_df)
+}
+```
+
+```{r Extract Influential Landmarks/Coordinates (PC1-PC5 - Precaudal)}
+#extract the most influential coordinates/landmarks for PC1:PC5 (collectively explains ~80% of variation)
+top_landmarks_precaudal <- extract_top_contributors(precaudal_pca, num_pcs = 5, top_n = 10)
+
+#convert dataframe to a list of lists
+top_landmarks_precaudal_list <- split(top_landmarks_precaudal, top_landmarks_precaudal$PC)
+names(top_landmarks_precaudal_list) <- paste0("PC", names(top_landmarks_precaudal_list))
+
+#access lists
+top_landmarks_precaudal_list$PC1
+top_landmarks_precaudal_list$PC2 #etc.
+top_landmarks_precaudal_list$PC3 #etc.
+top_landmarks_precaudal_list$PC4 #etc.
+top_landmarks_precaudal_list$PC5
+
+#assemble into dataframe
+precaudal_top_landmarks <- rbind(top_landmarks_precaudal_list$PC1, top_landmarks_precaudal_list$PC2,top_landmarks_precaudal_list$PC3, top_landmarks_precaudal_list$PC4,top_landmarks_precaudal_list$PC5)
+
+#export as CSV file
+write.csv(precaudal_top_landmarks, 'Data/precaudal_top_landmarks.csv')
+```
+
+# Visualisation of PC Shape Change
+
+```{r Define Links for Visualisation}
+#will connect landmarks with lines to make visualisation easier
+links <- rbind(
+  c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8))
+```
+
+```{r Plot Vectors of PC1 SD to Visualise Shape Change (Precaudal)}
+
+#convert mean shape into a matrix
+mean_shape <- mshape(
+species_means_precaudal)
+colnames(mean_shape) <- c("X", "Y", "Z")
+
+#extract PC1 loadings vector (i.e. the rotations matrix)
+pc1_vector <- precaudal_pca$rotation[, 1]
+pc1_matrix <- matrix(pc1_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc1 <- sd(precaudal_pca$x[, 1])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc1_shape_plus  <- mean_shape + 2 * sd_pc1 * pc1_matrix
+pc1_shape_minus <- mean_shape - 2 * sd_pc1 * pc1_matrix
+
+#visualize shape change along PC1
+plotRefToTarget(mean_shape, pc1_shape_plus, method = "point", mag = 3, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "white", link.col="white", link.lwd = 0.01, pt.size=0.01,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 8, tar.pt.size=0.01))
+
+plotRefToTarget(mean_shape, pc1_shape_minus, method = "point", mag = 3, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2,
+                                    tar.pt.size=0.50))
+
+#visualize shape change along PC1 (negative)
+plotRefToTarget(mean_shape, pc1_shape_minus, method = "point", mag = 2, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "white", link.col="white", link.lwd = 0.01, pt.size=0.01,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 5, tar.pt.size=0.01))
+```
+
+```{r Plot Vectors of PC2 SD to Visualise Shape Change (Precaudal)}
+
+#extract PC2 loadings vector (i.e. the rotations matrix)
+pc2_vector <- precaudal_pca$rotation[, 2]
+pc2_matrix <- matrix(pc2_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc2 <- sd(precaudal_pca$x[, 2])
+
+#create shapes representing mean shape ± 2 SD along PC2
+pc2_shape_plus  <- mean_shape + 2 * sd_pc2 * pc2_matrix
+pc2_shape_minus <- mean_shape - 2 * sd_pc2 * pc2_matrix
+
+#visualize shape change along PC2
+plotRefToTarget(mean_shape, pc2_shape_plus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #, links=links) #larger PC2
+plotRefToTarget(mean_shape, pc2_shape_minus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #smaller PC2
+```
+
+```{r Plot Vectors of PC3 SD to Visualise Shape Change (Precaudal)}
+
+#extract PC3 loadings vector (i.e. the rotations matrix)
+pc3_vector <- precaudal_pca$rotation[, 3]
+pc3_matrix <- matrix(pc3_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc3 <- sd(precaudal_pca$x[, 3])
+
+#create shapes representing mean shape ± 2 SD along PC3
+pc3_shape_plus  <- mean_shape + 2 * sd_pc3 * pc3_matrix
+pc3_shape_minus <- mean_shape - 2 * sd_pc3 * pc3_matrix
+
+#visualize shape change along PC3
+plotRefToTarget(mean_shape, pc3_shape_plus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #, links=links) #larger PC3
+plotRefToTarget(mean_shape, pc3_shape_minus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #smaller PC3
+```
+
+```{r Plot Vectors of PC4 SD to Visualise Shape Change (Precaudal)}
+
+#extract PC4 loadings vector (i.e. the rotations matrix)
+pc4_vector <- precaudal_pca$rotation[, 4]
+pc4_matrix <- matrix(pc4_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc4 <- sd(precaudal_pca$x[, 4])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc4_shape_plus  <- mean_shape + 2 * sd_pc4 * pc4_matrix
+pc4_shape_minus <- mean_shape - 2 * sd_pc4 * pc4_matrix
+
+#visualize shape change along PC4
+plotRefToTarget(mean_shape, pc4_shape_plus, method = "vector", mag = 3, label = TRUE, axes = TRUE) #larger PC4
+plotRefToTarget(mean_shape, pc4_shape_minus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #smaller PC4
+```
+
+```{r Plot Vectors of PC5 SD to Visualise Shape Change (Precaudal)}
+
+#extract PC3 loadings vector (i.e. the rotations matrix)
+pc5_vector <- precaudal_pca$rotation[, 5]
+pc5_matrix <- matrix(pc5_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc5 <- sd(precaudal_pca$x[, 5])
+
+#create shapes representing mean shape ± 2 SD along PC5
+pc5_shape_plus  <- mean_shape + 2 * sd_pc5 * pc5_matrix
+pc5_shape_minus <- mean_shape - 2 * sd_pc5 * pc5_matrix
+
+#visualize shape change along PC5
+plotRefToTarget(mean_shape, pc5_shape_plus, method = "vector", mag = 3, label = TRUE, axes = TRUE) #larger PC4
+plotRefToTarget(mean_shape, pc5_shape_minus, method = "vector", mag = 2, label = TRUE, axes = TRUE) #smaller PC4
+```
+
+# Correlation of Precaudal PCs
+
+```{r Define Function to Plot PCs According to Ecomorphology}
+
+plot_convex_hull <- function(data, pc_x, pc_y, xlab_perc, ylab_perc) {
+  
+  #calculate convex hull per group
+  hull_data <- data %>%
+    group_by(lm_ecology) %>%
+    slice(chull(.data[[pc_x]], .data[[pc_y]]))
+  
+  #plot
+  p <- ggplot(data, aes_string(x = pc_x, y = pc_y)) +
+    geom_polygon(data = hull_data, aes(fill = lm_ecology, group = lm_ecology), alpha = 0.3) +
+    geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black") +
+    geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+    scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    )) +
+    xlab(paste0(pc_x, " (", xlab_perc, "%)")) +
+    ylab(paste0(pc_y, " (", ylab_perc, "%)")) +
+    geom_vline(xintercept=0, linetype='dotdash') +
+    geom_hline(yintercept=0, linetype='dotdash') +
+    theme_classic() +
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+  
+  return(p)
+}
+
+```
+
+```{r Plot Precaudal PCs According to Ecomorphology}
+
+#define variances for plotting 
+var_explained <- c(PC1 = 47.47, PC2 = 16.16, PC3 = 10.73, PC4 = 5.93, PC5 = 3.95)
+
+
+p1_2 <- plot_convex_hull(species_data, "precaudal_PC1", "precaudal_PC2", var_explained["PC1"], var_explained["PC2"])
+p2_3 <- plot_convex_hull(species_data, "precaudal_PC2", "precaudal_PC3", var_explained["PC2"], var_explained["PC3"])
+p3_4 <- plot_convex_hull(species_data, "precaudal_PC3", "precaudal_PC4", var_explained["PC3"], var_explained["PC4"])
+p4_5 <- plot_convex_hull(species_data, "precaudal_PC4", "precaudal_PC5", var_explained["PC4"], var_explained["PC5"])
+
+#To display plots one by one:
+print(p1_2)
+print(p2_3)
+print(p3_4)
+print(p4_5)
+```
+
+```{r Multivariate Model PC1-PC5 ~ Ecomorphology (Precaudal)}
+#fit multivariate model testing whether variation in precaudal vertebral shape can be explained by body elongation
+fit_full <- mvgls(
+  cbind(precaudal_PC1, precaudal_PC2, precaudal_PC3, precaudal_PC4, precaudal_PC5) ~ lm_ecology,
+  data = species_data,
+  tree = pruned_tree,
+  model = "lambda",
+  method = "PL-LOOCV"
+)
+fit_full
+
+#MANOVA to test significance of model
+manova.gls(fit_full, test=c("Pillai"), adjust='holm', nperm = 10000)
+```
+
+# Correlation of Shape Variation and Body Elongation
+
+```{r Fit PGLS Model on Size-Corrected Caudal Shape Residuals}
+#define numerical vector of body aspect ratios
+ln_length_ln_width <- species_data$ln_length_ln_width
+names(ln_length_ln_width) <- species_data$species_name
+
+#check specimen lengths as well
+ln_standard_length <- species_data$ln_standard_length
+names(ln_standard_length) <- species_data$species_name
+
+#fit the model
+procd_pgls_precaudal_size_corrected_body_elongation <- procD.pgls(shape_resid_species ~ ln_length_ln_width + ln_standard_length, pruned_tree, iter = 99999, seed=1931)
+summary(procd_pgls_precaudal_size_corrected_body_elongation)
+```
+
+```{r Precaudal PC1-PC5 ~ Body Elongation (mvgls)}
+#fit multivariate model testing whether variation in precaudal vertebral shape can be explained by body elongation, check standard length as well just incase its because more elongate fish are just longer.
+fit_full <- mvgls(
+  cbind(precaudal_PC1, precaudal_PC2, precaudal_PC3, precaudal_PC4, precaudal_PC5) ~ ln_length_ln_width + ln_standard_length,
+  data = species_data,
+  tree = pruned_tree,
+  model = "lambda",
+  method = "LL"
+)
+fit_full #aspect ratio is signficant but standard length is NOT
+
+#MANOVA to test significance of model
+manova.gls(fit_full, test=c("Pillai"), adjust='holm', nperm = 10000)
+```
+
+```{r Fitting Individual PGLS models to Precaudal PCs (ln_length_ln_width)}
+#create comparative data object 
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit individual pgls models to the PCs to test which PCs elongation best explains
+precaudal_individual_PC_elongation_models <- lapply(paste0("precaudal_PC", 1:5), function(pc) {
+  formula <- as.formula(paste(pc, "~ ln_length_ln_width"))
+  model <- pgls(formula, data = comp_data, lambda = "ML")
+  summary(model)
+})
+names(precaudal_individual_PC_elongation_models) <- paste0("precaudal_PC", 1:5)
+
+#print out summaries of each model
+precaudal_individual_PC_elongation_models$precaudal_PC1 #SIG
+precaudal_individual_PC_elongation_models$precaudal_PC2 #NS
+precaudal_individual_PC_elongation_models$precaudal_PC3 #NS
+precaudal_individual_PC_elongation_models$precaudal_PC4 #NS
+precaudal_individual_PC_elongation_models$precaudal_PC5 #NS
+
+#extract p-values for multiple testing
+p_values <- sapply(precaudal_individual_PC_elongation_models, function(mod_summary) {
+  # Extract p-value for the slope (usually 2nd row, 4th column in coef table)
+  coef_table <- mod_summary$coefficients
+  p_val <- coef_table[2, "Pr(>|t|)"]
+  return(p_val)
+})
+
+#multiple testing correction
+p_adj_bonf <- p.adjust(p_values, method = "bonferroni")
+p_adj_BH <- p.adjust(p_values, method = "BH")
+
+#assemble into dataframe
+data.frame(
+  PC = names(p_values),
+  p_value = p_values,
+  p_bonferroni = p_adj_bonf,
+  p_BH = p_adj_BH
+)
+
+```
+
+```{r Fit PGLS model to PC1 ~ ln_length_ln_width (extremes removed)}
+
+#we need to check that this relationship isn't being driven by the abnormally elongate Rhamphochromis, or indeed some of the deeper-bodied deep benthics. 
+
+#remove the bottom and top 10% of species according to body aspect ratio
+q_low  <- quantile(species_data$ln_length_ln_width, 0.10)
+q_high <- quantile(species_data$ln_length_ln_width, 0.90)
+
+#remove the species from the dataframe
+species_data_trim <- species_data[species_data$ln_length_ln_width > q_low & species_data$ln_length_ln_width < q_high, ]
+
+#prune the tree again
+species_keep <- species_data_trim$species_name
+pruned_tree_trimmed <- drop.tip(pruned_tree, setdiff(pruned_tree$tip.label, species_keep))
+species_removed <- setdiff(pruned_tree$tip.label, species_keep)
+
+#create comparative data object 
+comp_data <- comparative.data(pruned_tree_trimmed, species_data_trim, species_name, vcv=TRUE)
+
+#fit the pgls model
+trimmed_model <- pgls(precaudal_PC1 ~ ln_length_ln_width, data=comp_data, lambda="ML")
+summary(trimmed_model) #r2 dropped considerably (62% --> 20% but is positive (beta = 0.17) and still significant p=0.002233)
+```
+```{r Plot Precaudal PC1 aganst Body Elongation (Extremes Removed)}
+precaudal_PC1_elongation_ols_trimmed <- lm(precaudal_PC1 ~ ln_length_ln_width, species_data_trim)
+summary(precaudal_PC1_elongation_ols_trimmed)
+
+a0 <- ggplot(species_data_trim, aes(x=ln_length_ln_width, y=precaudal_PC1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black")+
+  geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = trimmed_model$model$coef[[1]], 
+              slope = trimmed_model$model$coef[[2]], 
+              size = 0.75, colour = 'red', linetype = 'dashed')+ #PGLS is red
+  geom_abline(intercept=precaudal_PC1_elongation_ols_trimmed$coefficients[[1]], 
+              slope = precaudal_PC1_elongation_ols_trimmed$coefficients[[2]], 
+              size = 0.75, colour = 'black', linetype = 'solid')+   
+   scale_fill_manual(values = c(
+  "Astatotilapia" = "#E87D72",
+  "not_applicable" = "#E87D72",
+  "Rhamphochromis" = "#51B3E6",
+  "Diplotaxodon" = "grey",
+  "Deep Benthic" = "#BD9C33",
+  "Shallow Benthic" = "#A18BF8",
+  "Utaka" = "#FC61D7",
+  "Mbuna" = "#00C095"
+))+
+  ylim(-0.10, 0.10)+
+  xlab("ln[Length]-ln[Depth]")+
+  ylab("Precaudal PC1 (47.47%)")+
+   theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a0
+
+ggsave("Figures/precaudal_pc1_body_elongation_trimmed.svg", a0, height=5, width = 5)
+  
+```
+
+```{r Leave One In One Out Analysis}
+
+# ---- FULL MODEL ----
+full_model <- pgls(precaudal_PC1 ~ ln_length_ln_width,
+                   data = comp_data,
+                   lambda = "ML")
+
+full_summary <- summary(full_model)
+
+full_slope <- full_summary$coefficients[2,1]
+full_r2    <- full_summary$r.squared
+
+# ---- LEAVE-ONE-OUT ----
+species <- species_data$species_name
+
+loo_results <- data.frame(
+  species_removed = species,
+  slope = NA,
+  r2 = NA,
+  pval = NA,
+  lambda = NA
+)
+
+for (i in seq_along(species)) {
+  
+  sp <- species[i]
+  
+  # Remove species
+  df_sub <- species_data[species_data$species_name != sp, ]
+  tree_sub <- drop.tip(tree, sp)
+  
+  # Rebuild comparative dataset
+  comp_sub <- comparative.data(tree_sub, df_sub,
+                               names.col = "species_name",
+                               vcv = TRUE)
+  
+  # Fit model
+  model <- pgls(precaudal_PC1 ~ ln_length_ln_width,
+                data = comp_sub,
+                lambda = "ML")
+  
+  summ <- summary(model)
+  
+  loo_results$slope[i]  <- summ$coefficients[2, 1]
+  loo_results$pval[i]   <- summ$coefficients[2, 4]
+  loo_results$r2[i]     <- summ$r.squared
+  loo_results$lambda[i] <- model$param["lambda"]
+}
+
+# ---- QUICK CHECKS ----
+
+# Range of slopes
+range(loo_results$slope) #range is fairly good
+
+# Number of non-significant models
+sum(loo_results$pval > 0.05) #none of the models are non-significant
+
+# Most influential species
+loo_results %>%
+  mutate(diff = abs(slope - full_slope)) %>%
+  arrange(desc(diff)) %>%
+  head()
+
+#plot distributions of slopes and r^2 values
+
+#slopes
+b0 <- ggplot(loo_results, aes(x = slope)) +
+  geom_histogram(binwidth = 0.05, boundary = 0.10, fill = 'grey', colour = 'black')+
+  scale_x_continuous(
+    limits = c(0.10, 0.40),
+    breaks = seq(0.10, 0.40, by = 0.05)
+  )+
+  xlab(expression(bold("Slope " * beta[1])))+
+  ylab("Count") +
+  theme_classic() +
+  geom_vline(xintercept = 0.274796, linetype='dashed', linewidth=1, colour='red')+ #value of full model
+  theme(
+    legend.position = "none",
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 0, vjust = 0, hjust = 0.5, size = 14)
+  )
+b0
+ggsave("Figures/precaudal_pc1_loo_slope.svg", b0, height=5, width = 5)
+
+
+#r^2
+b1 <- ggplot(loo_results, aes(x = r2)) +
+  geom_histogram(binwidth = 0.05, boundary = 0.35, fill = 'grey', colour = 'black')+
+  scale_x_continuous(
+    limits = c(0.35, 0.70),
+    breaks = seq(0.35, 0.70, by = 0.05)
+  ) +
+  xlab(expression(bold(R^2))) +
+  ylab("Count") +
+  theme_classic() +
+  geom_vline(xintercept = 0.6283, linetype='dashed', linewidth=1, colour='red')+ #value of full model
+  theme(
+    legend.position = "none",
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 0, vjust = 0, hjust = 0.5, size = 14)
+  )
+b1
+ggsave("Figures/precaudal_pc1_loo_r2.svg", b1, height=5, width = 5)
+
+
+```
+
+```{r Plot Precaudal PC1 aganst Body Elongation}
+precaudal_PC1_elongation_ols <- lm(precaudal_PC1 ~ ln_length_ln_width, species_data)
+summary(precaudal_PC1_elongation_ols)
+
+a1 <- ggplot(species_data, aes(x=ln_length_ln_width, y=precaudal_PC1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black")+
+  geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = precaudal_individual_PC_elongation_models$precaudal_PC1$coefficients[[1]], 
+              slope = precaudal_individual_PC_elongation_models$precaudal_PC1$coefficients[[2]], 
+              size = 0.75, colour = 'red', linetype = 'dashed')+ #PGLS is red
+  #geom_abline(intercept=precaudal_PC1_elongation_ols$coefficients[[1]], 
+              #slope = precaudal_PC1_elongation_ols$coefficients[[2]], 
+              #size = 0.75, colour = 'black', linetype = 'solid')+ # OLS is black #lines are the same as lambda is basically 0 
+   scale_fill_manual(values = c(
+  "Astatotilapia" = "#E87D72",
+  "not_applicable" = "#E87D72",
+  "Rhamphochromis" = "#51B3E6",
+  "Diplotaxodon" = "grey",
+  "Deep Benthic" = "#BD9C33",
+  "Shallow Benthic" = "#A18BF8",
+  "Utaka" = "#FC61D7",
+  "Mbuna" = "#00C095"
+))+
+  ylim(-0.20, 0.20)+
+  xlab("ln[Length]-ln[Depth]")+
+  ylab("Precaudal PC1 (47.47%)")+
+   theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a1
+
+ggsave("Figures/precaudal_pc1_body_elongation.svg", a1, height=5, width = 5)
+  
+```
+
+```{r Plot PC1 against PC2 (Ecomorphology)}
+
+#calculate convex hull per group
+  hull_data <- species_data %>%
+    group_by(lm_ecology) %>%
+    slice(chull(precaudal_PC1, precaudal_PC2))
+  
+  #plot
+  a2 <- ggplot(species_data, aes(x = precaudal_PC1, y = precaudal_PC2)) +
+    geom_polygon(data = hull_data, aes(fill = lm_ecology, group = lm_ecology), alpha = 0.3) +
+    geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black") +
+    geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+    scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    )) +
+    xlab('Precaudal PC1 (47.47%)') +
+    ylab('Precaudal PC2 (16.16%)') +
+    geom_vline(xintercept=0, linetype='dotdash')+
+    geom_hline(yintercept=0, linetype='dotdash')+
+    theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a2
+
+ggsave("Figures/precaudal_pc1_pc2_ecomorphology.svg", a2, height=5, width = 10)
+
+```
+
+
+

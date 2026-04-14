@@ -1,0 +1,571 @@
+---
+title: "Vertebral Column Regionalisation"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(MorphoRegions)
+```
+
+```{r Import Data}
+
+vertebrae <- readland.tps("Data/regionalisation_vertebrae.tps",
+                              specID = c("ID"))
+```
+
+```{r Split into Multiple Species}
+
+#Extract species names (Genus_species) note that the index will be preserved for splitting the array
+specimen_names <- dimnames(vertebrae)[[3]]
+species_names <- gsub("^([A-Za-z]+_[A-Za-z]+).*", "\\1", specimen_names)
+
+#find unique Genus_species names
+unique_species <- unique(species_names)
+
+# Initialize a list to store the resulting arrays
+split_arrays <- list()
+
+# Loop over each unique species and extract the data for that species
+for (species in unique_species) {
+  species_indices <- which(species_names == species)
+  split_arrays[[species]] <- vertebrae[, , species_indices]
+}
+
+#split the array into entries for each species
+
+#initialize a list to store the arrays for each species
+species_arrays_list <- list()
+
+#loop over each unique species
+for (species in unique_species) {
+  #extract the corresponding array for each species
+  species_arrays_list[[species]] <- split_arrays[[species]]
+}
+
+#Example species_arrays_list
+# pecies_arrays_list <- list(Astatotilapia_calliptera = arr_1, Astatotilapia_another_species = arr_2, ...)
+
+#function to reorder an array based on version numbers in the species names
+reorder_array <- function(arr, species_names) {
+  #extract version numbers from the species names
+  version_numbers <- as.numeric(gsub(".*_v(\\d+)$", "\\1", species_names))
+  
+  #get the order of the species based on version numbers in ascending order
+  sorted_order <- order(version_numbers)
+  
+  #reorder the array based on the sorted order
+  reordered_arr <- arr[, , sorted_order]
+  
+  return(reordered_arr)
+}
+
+#initialize a new list to store the reordered arrays
+reordered_species_arrays_list <- list()
+
+#loop over each species in the original list
+for (species in names(species_arrays_list)) {
+  #get the array for the current species
+  current_arr <- species_arrays_list[[species]]
+  
+  #get the species names (dimnames)
+  species_names <- dimnames(current_arr)[[3]]
+  
+  #reorder the current array based on the version numbers
+  reordered_species_arrays_list[[species]] <- reorder_array(current_arr, species_names)
+}
+
+#individual species entries can be accessed like this:
+#reordered_species_arrays_list$Astatotilapia_calliptera
+```
+
+```{r Calculate All Linear Measures for Each Vertebrae}
+#define empty results dataframe
+results <- data.frame(
+  specimen = character(),
+  species  = character(),
+  position = as.numeric(),
+     dcl = as.numeric(),
+      mcl = as.numeric(),
+      vcl = as.numeric(),
+      pcl = as.numeric(),
+      acl = as.numeric(),
+      cnw = as.numeric(),
+      nsla = as.numeric(),
+      nslp = as.numeric(),
+      nada = as.numeric(),
+      nadp = as.numeric(),
+      nafl = as.numeric(),
+      avl = as.numeric(),
+      pvl = as.numeric(),
+      acr = as.numeric(),
+      pcr = as.numeric(),
+      aca = as.numeric(),
+      pca = as.numeric(),
+      ln_aca_ln_pca = as.numeric(),
+      ln_nsla_ln_nada = as.numeric(),
+      ln_nsla_ln_acl = as.numeric(),
+      car = as.numeric(),
+      nafa = as.numeric(),
+      nsta = as.numeric(),
+      vfa = as.numeric(),
+      nsaa = as.numeric(),
+  stringsAsFactors = FALSE
+)
+
+#get the specimen and species names
+for (species_name in names(reordered_species_arrays_list)) {
+  coords_array <- reordered_species_arrays_list[[species_name]]  # 15 x 3 x n_specimens
+
+  #calculate all the linear measures for each vertebrae
+  for (spec_idx in seq_len(dim(coords_array)[3])) {
+    coords <- coords_array[, , spec_idx]  # 15×3 matrix for one specimen
+    specimen_id <- dimnames(coords_array)[[3]][spec_idx]
+    
+    # --- Calculate distances ---
+    dcl <- sqrt(sum((coords[3, ] - coords[12, ])^2))
+    mcl  <- sqrt(sum((coords[5, ] - coords[14, ])^2))
+    vcl <- sqrt(sum((coords[4, ] - coords[13, ])^2))
+    pcl <- sqrt(sum((coords[12, ] - coords[13, ])^2))
+    acl <- sqrt(sum((coords[3, ] - coords[4, ])^2))
+    cnw <- sqrt(sum((coords[8, ] - coords[15, ])^2))
+    nsla <- sqrt(sum((coords[1, ] - coords[2, ])^2))
+    nslp <- sqrt(sum((coords[1, ] - coords[11, ])^2))
+    nada <- sqrt(sum((coords[2, ] - coords[3, ])^2))
+    nadp <- sqrt(sum((coords[11, ] - coords[12, ])^2))
+    nafl <- sqrt(sum((coords[2, ] - coords[11, ])^2))
+    avl <- sqrt(sum((coords[1, ] - coords[4, ])^2))
+    pvl <- sqrt(sum((coords[1, ] - coords[13, ])^2))
+    acr <- sqrt(sum((coords[5, ] - (coords[3, ] + coords[4, ]) / 2)^2))
+    pcr <- sqrt(sum((coords[14, ] - (coords[12, ] + coords[13, ]) / 2)^2))
+    aca <- pi * (acr)^2
+    pca <- pi * (pcr)^2
+    ln_aca_ln_pca <- log(aca) - log(pca) 
+    ln_nsla_ln_nada <- log(nsla) - log(nada)
+    ln_nsla_ln_acl <- log(nsla) - log(acl)
+    car <- log(mean(c(dcl, mcl, vcl))) - log(mean(c(acl, pcl)))
+    
+    # --- calculate nafa ---
+    a <- sqrt(sum((coords[3, ] - coords[4, ])^2))
+    b <- sqrt(sum((coords[4, ] - (coords[6, ] + coords[7, ]) / 2)^2))
+    c <- sqrt(sum((coords[3, ] - (coords[6, ] + coords[7, ]) / 2)^2))
+    #law of cosines
+    nafa <- acos((a^2 + b^2 - c^2) / (2 * a * b)) * 180 / pi
+    
+    
+     # --- calculate nafa---
+    a <- sqrt(sum((coords[3, ] - coords[4, ])^2))
+    b <- sqrt(sum((coords[4, ] - (coords[6, ] + coords[7, ]) / 2)^2))
+    c <- sqrt(sum((coords[3, ] - (coords[6, ] + coords[7, ]) / 2)^2))
+    #law of cosines
+    nafa <- acos((a^2 + b^2 - c^2) / (2 * a * b)) * 180 / pi
+    
+    # --- calculate nsta---
+    a <- sqrt(sum((coords[3, ] - coords[12, ])^2))
+    b <- sqrt(sum((coords[1, ] - coords[3, ])^2))
+    c <- sqrt(sum((coords[1, ] - coords[12, ])^2))
+    #law of cosines
+    nsta <- acos((a^2 + b^2 - c^2) / (2 * a * b)) * 180 / pi
+    
+    # --- calculate vfa---
+    a <- sqrt(sum((coords[3, ] - coords[4, ])^2))
+    b <- sqrt(sum((coords[3, ] - (coords[9, ] + coords[10, ]) / 2)^2))
+    c <- sqrt(sum((coords[4, ] - (coords[9, ] + coords[10, ]) / 2)^2))
+    #law of cosines
+    vfa <- acos((a^2 + b^2 - c^2) / (2 * a * b)) * 180 / pi
+    
+    # --- calculate nsaa---
+    a <- sqrt(sum((coords[2, ] - coords[3, ])^2))
+    b <- sqrt(sum((coords[3, ] - coords[12, ])^2))
+    c <- sqrt(sum((coords[2, ] - coords[12, ])^2))
+    #law of cosines
+    nsaa <- acos((a^2 + b^2 - c^2) / (2 * a * b)) * 180 / pi
+    
+    # extract vertebra number
+    position <- as.numeric(sub(".*_v([0-9]+)$", "\\1", specimen_id))
+
+    # --- Store results ---
+    results <- rbind(results, data.frame(
+      specimen = specimen_id,
+      species  = species_name,
+      position = position,
+      dcl = dcl,
+      mcl = mcl,
+      vcl = vcl,
+      pcl = pcl,
+      acl = acl,
+      cnw = cnw,
+      nsla = nsla,
+      nslp = nslp,
+      nada = nada,
+      nadp = nadp,
+      nafl = nafl,
+      avl = avl,
+      pvl = pvl,
+      acr = acr,
+      pcr = pcr,
+      aca = aca,
+      pca = pca,
+      ln_aca_ln_pca = ln_aca_ln_pca,
+      ln_nsla_ln_nada = ln_nsla_ln_nada,
+      ln_nsla_ln_acl = ln_nsla_ln_acl,
+      car = car,
+      nafa = nafa,
+      nsta = nsta,
+      vfa = vfa,
+      nsaa = nsaa,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+#add vertebrae column
+#results
+
+#split results by species
+species_list <- split(results, results$species)
+
+#create a separate dataframe for each species
+for (sp in names(species_list)) {
+  sp_clean <- make.names(sp)  # make variable name safe
+  df <- species_list[[sp]][ , !(names(species_list[[sp]]) %in% c("specimen", "species")) ] #remove specimen and species columns from each dataframe
+  rownames(df) <- df$position
+  assign(sp_clean, df)
+}
+```
+
+# Astatotilapia calliptera
+
+```{r Preparing Data for MorphoRegion (Astatotilapia calliptera)}
+#process PC data for MorphoRegions
+ac <- process_measurements(Astatotilapia_calliptera, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+ac_pco <- svdPCO(ac, metric = 'Manhattan', scale=TRUE) 
+```
+
+```{r Determine number of PCOs to Retain (Astatotilapia calliptera)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+PCOs <- PCOselect(ac_pco, method = "boot")
+plot(PCOs) #looks like PCO1-3 should be retained
+
+#override and keep 5
+PCOs <- PCOselect(ac_pco, method = "manual",
+                  scores = 3)
+plot(ac_pco, 1:3)
+```
+
+```{r Loadings of each Measure on Each PCO}
+#plot loadings for the PCOs
+loadings <- PCOload(ac_pco, scores = PCOs)
+plot(loadings)
+```
+
+```{r Calculate number of regions present (Astatotilapia calliptera)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_ac <- calcregions(ac_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_ac <- modelselect(regionresults_ac)
+models_ac
+
+#output the support for each model
+supp_ac <- modelsupport(models_ac)
+supp_ac
+```
+
+```{r Plot Regressions on PCOs (Astatotilapia calliptera)}
+#plot regressions for best model:
+plotsegreg(ac_pco, scores = 1:3,
+           modelsupport = supp_ac,
+           criterion = "aic",
+           model = 1) #recovering anterior domain, true precaudal, caudal and Ural domain
+```
+
+# Maylandia zebra
+
+```{r Preparing Data for MorphoRegion (Maylandia zebra)}
+#Process PC data for MorphoRegions
+mz <- process_measurements(Maylandia_zebra, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+mz_pco <- svdPCO(mz, metric = 'Manhattan', scale=TRUE) #Gower similarity matrix
+```
+
+```{r Determine number of PCOs to Retain (Maylandia zebra)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+PCOs <- PCOselect(mz_pco, method = "boot")
+plot(PCOs) #looks like PCO1-2 should be retained
+
+#override and keep 2
+PCOs <- PCOselect(mz_pco, method = "manual",
+                  scores = 2)
+plot(mz_pco, 1:2)
+```
+
+```{r Loadings of each Measure on Each PCO (Maylandia zebra)}
+
+#plot loadings for the PCOs
+loadings <- PCOload(mz_pco, scores = PCOs)
+plot(loadings)
+```
+```{r Calculate number of regions present (Maylandia zebra)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_mz <- calcregions(mz_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_mz <- modelselect(regionresults_mz)
+models_mz
+
+#output the support for each model
+supp_mz <- modelsupport(models_mz)
+supp_mz
+```
+
+```{r Plot Regressions on PCOs (Maylandia zebra)}
+#plot regressions for best model:
+plotsegreg(mz_pco, scores = 1:3,
+           modelsupport = supp_mz,
+           criterion = "aic",
+           model = 1) #anterior region, precaudal and caudal 
+```
+
+# Copadichromis quadrimaculatus
+
+```{r Preparing Data for MorphoRegion (Copadichromis quad)}
+#Process PC data for MorphoRegions
+cq <- process_measurements(Copadichromis_quadrimaculatus, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+cq_pco <- svdPCO(cq, metric = 'Manhattan', scale=TRUE) #Gower similarity matrix
+```
+
+```{r Determine number of PCOs to Retain (Copadichromis quad)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+PCOs <- PCOselect(cq_pco, method = "boot")
+plot(PCOs) #looks like PCO1-2 should be retained
+
+#override and keep 2
+PCOs <- PCOselect(cq_pco, method = "manual",
+                  scores = 10)
+plot(cq_pco, 1:5)
+```
+
+```{r Loadings of each Measure on Each PCO (Copadichromis quadrimaculatus)}
+
+#plot loadings for the PCOs
+loadings <- PCOload(cq_pco, scores = PCOs)
+plot(loadings)
+```
+
+```{r Calculate number of regions present (Copadichromis quadrimaculatus)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_cq <- calcregions(cq_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_cq <- modelselect(regionresults_cq)
+models_cq
+
+#output the support for each model
+supp_cq <- modelsupport(models_cq)
+supp_cq
+```
+
+```{r Plot Regressions on PCOs (Copadichromis quadrimaculatus)}
+#plot regressions for best model:
+plotsegreg(cq_pco, scores = 1:3,
+           modelsupport = supp_cq,
+           criterion = "aic",
+           model = 1)
+```
+
+# Lethrinops gossei
+
+```{r Preparing Data for MorphoRegion (Lethrinops gossei)}
+#Process PC data for MorphoRegions
+lg <- process_measurements(Lethrinops_gossei, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+lg_pco <- svdPCO(lg, metric = 'Manhattan', scale=TRUE) #Gower similarity matrix
+```
+
+```{r Determine number of PCOs to Retain (Lethrinops gossei)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+PCOs <- PCOselect(lg_pco, method = "boot")
+plot(PCOs) #looks like PCO1-2 should be retained
+
+PCOs
+
+#override and keep 2
+PCOs <- PCOselect(lg_pco, method = "manual",
+                  scores = 10)
+plot(lg_pco, 1:5)
+```
+
+```{r Loadings of each Measure on Each PCO (Lethrinops gossei)}
+
+#plot loadings for the PCOs
+loadings <- PCOload(lg_pco, scores = PCOs)
+plot(loadings)
+```
+
+```{r Calculate number of regions present (Lethrinops gossei)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_lg <- calcregions(lg_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_lg <- modelselect(regionresults_lg)
+models_lg
+
+#output the support for each model
+supp_lg <- modelsupport(models_lg)
+supp_lg
+```
+
+```{r Plot Regressions on PCOs (Lethrinops gossei)}
+#plot regressions for best model:
+plotsegreg(lg_pco, scores = 1:5,
+           modelsupport = supp_lg,
+           criterion = "aic",
+           model = 1)
+```
+
+# Placidochromis johnstoni
+
+```{r Preparing Data for MorphoRegion (Placidochromis johnstoni)}
+#Process PC data for MorphoRegions
+pj <- process_measurements(Placidochromis_johnstoni, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+pj_pco <- svdPCO(pj, metric = 'Manhattan', scale=TRUE) #Gower similarity matrix
+```
+
+```{r Determine number of PCOs to Retain (Placidochromis johnstoni)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+#PCOs <- PCOselect(pj_pco, method = "boot")
+#plot(PCOs) #looks like PCO1-2 should be retained
+
+#override and keep 2
+PCOs <- PCOselect(pj_pco, method = "manual",
+                  scores = 10)
+plot(pj_pco, 1:5) #plot first five PCOs by vertebral position
+```
+
+```{r Loadings of each Measure on Each PCO (Placidochromis johnstoni)}
+
+#plot loadings for the PCOs
+loadings <- PCOload(pj_pco, scores = PCOs)
+plot(loadings)
+```
+
+```{r Calculate number of regions present (Placidochromis johnstoni)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_pj <- calcregions(pj_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_pj <- modelselect(regionresults_pj)
+models_pj
+
+#output the support for each model
+supp_pj <- modelsupport(models_pj)
+supp_pj
+```
+
+```{r Plot Regressions on PCOs (Placidochromis johnstoni)}
+#plot regressions for best model:
+plotsegreg(pj_pco, scores = 1:5,
+           modelsupport = supp_pj,
+           criterion = "aic",
+           model = 1)
+```
+# Rhamphochromis sp. 'chilingali'
+
+```{r Preparing Data for MorphoRegion (Rhamphochromis sp chilingali)}
+#Process PC data for MorphoRegions
+rc <- process_measurements(Rhamphochromis_chilingali, pos = 1)
+
+#throw all measures into PCO to identify primary axes of SIMILARITY (PCO != PCA)
+rc_pco <- svdPCO(rc, metric = 'Manhattan', scale=TRUE) #Gower similarity matrix
+```
+
+```{r Determine number of PCOs to Retain (Rhamphochromis sp chilingali)}
+#define number of PCOs to retain 
+#first bootstrap and plot to see how many we should retain
+PCOs <- PCOselect(rc_pco, method = "boot")
+plot(PCOs) #looks like PCO1-4 should be retained
+
+#override and keep 3
+PCOs <- PCOselect(rc_pco, method = "manual",
+                  scores = 4)
+plot(rc_pco, 1:4)
+```
+
+```{r Loadings of each Measure on Each PCO (Rhamphochromis sp chilingali)}
+
+#plot loadings for the PCOs
+loadings <- PCOload(rc_pco, scores = PCOs)
+plot(loadings)
+```
+
+```{r Calculate number of regions present (Rhamphochromis sp chilingali)}
+
+#calculate number of possible regions (i.e. the model fits)
+regionresults_rc <- calcregions(rc_pco, scores = PCOs, noregions = 9,
+                             minvert = 3, cont = TRUE, 
+                             exhaus = TRUE, cl = NULL,
+                             verbose = FALSE)
+
+#output the models
+models_rc <- modelselect(regionresults_rc)
+models_rc
+
+#output the support for each model
+supp_rc <- modelsupport(models_rc)
+supp_rc
+```
+
+```{r Plot Regressions on PCOs (Rhamphochromis sp chilingali)}
+#plot regressions for best model:
+plotsegreg(rc_pco, scores = 1:4,
+           modelsupport = supp_rc,
+           criterion = "bic",
+           model = 1)
+```

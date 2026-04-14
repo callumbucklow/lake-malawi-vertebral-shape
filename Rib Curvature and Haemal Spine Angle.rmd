@@ -1,0 +1,505 @@
+---
+title: "Rib Curvature and Haemal Spine Angle"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(Morpho)
+require(tidyverse)
+require(mvMORPH)
+require(phytools)
+require(viridis)
+require(rgl) #for 3D visualisation
+require(pracma) #for cross-product calculation (in calculation of kappa)
+```
+
+# Rib Curvature
+
+```{r Import Data}
+
+precaudal <- readland.tps("Data/precaudal.tps",
+                              specID = c("ID"), readcurves = TRUE)
+
+#drop Chindongo elongatus (broken neural spines)
+precaudal <- precaudal[, , !grepl("Chindongo_elongatus_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+precaudal <- precaudal[, , !grepl("M_zebra_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#import species data for specimens
+species_data <- read.csv('Data/species_data.csv')
+
+#remove 'ruaha blue' from species_data
+species_data <- 
+  species_data %>%
+  filter(!species_name %in% c("Astatotilapia sp. 'Ruaha blue'", "Chindongo elongatus")) #ribs are fine for Chindongo elongatus, but it was filtered out of PCA analysis, for consistency remove it here too. 
+
+#import the tree
+tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
+
+#remove _ from tip labels
+tree$tip.label <- gsub("_", " ", tree$tip.label)
+
+#prune tree
+tips_to_keep <- species_data$species_name
+
+#prune tree to tips present within data:
+pruned_tree <- keep.tip(tree, intersect(tree$tip.label, tips_to_keep))
+
+#reorder dataframe to match order of tips
+species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]
+
+#remove the damn X column
+species_data <- species_data %>% 
+  dplyr::select(-X)
+```
+
+```{r Extract Coordinates for Each Pleural Rib}
+
+#we want to extract the raw coordinates for each vertebrae
+rib_curvature_coordinates <- precaudal[16:27, , ]
+
+#reposition landmark 17 (now landmark 2) to the end of the array to match that it's marking the ventral tip of the pleural rib
+rib_curvature_coordinates_reordered <- rib_curvature_coordinates[c(1, 3:12, 2), , ]
+
+#this should pop-up a 3D plot of all of the aligned coordinates in X,Y,Z space
+plotAllSpecimens(rib_curvature_coordinates_reordered[,,1:3], #note that they are already arranged alphabetically (and therefore by species, so the first three are precaudal vertebrae belonging to the same species so will be on the same scale)
+                 label = TRUE, 
+                 plot.param = list(txt.cex = 2.00, 
+                                   txt.adj = 5.00, 
+                                   txt.col = 'red'))
+```
+
+```{r Procrustes Superimposition on Precaudal Vertebrae (ProcD)}
+#define the sliding landmarks (i.e. for rib-curvature)
+#define sliding landmarks (18 to 27) with fixed landmarks at 16 and 17 -- remember we have redefined 27 (in the original landmark scheme as the tip of the rib as landmark 17 as it is fixed)
+num_sliders <- 10  # Since sliding landmarks are 18 to 27
+precaudal_sliders <- matrix(NA, nrow = num_sliders, ncol = 3)
+
+for (i in 1:num_sliders) {
+  precaudal_sliders[i, ] <- c(17 + i, 17 + i - 1, 17 + i + 1)
+}
+
+#manually adjust first and last row of the matrix:
+precaudal_sliders[1, ] <- c(18, 16, 19)
+precaudal_sliders[10, ] <- c(27, 26, 17)
+
+#general procrustes superimposition on all caudal coordinates
+gpa_precaudal_procd <- gpagen(precaudal, curves = precaudal_sliders, max.iter = 100, ProcD = FALSE) #FALSE here minimises bending energy
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal_procd$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+# Extract centroid sizes for all specimens
+centroid_sizes <- gpa_precaudal_procd$Csize
+
+# Initialize vector to store mean centroid size per species
+species_centroid_means <- numeric(length(unique_species))
+names(species_centroid_means) <- unique_species
+
+# Loop through species and compute mean centroid size
+for (i in seq_along(unique_species)) {
+  species_centroid_means[i] <- mean(centroid_sizes[species == unique_species[i]])
+}
+
+#convert to dataframe
+centroid_size_df <- data.frame(
+  species_name = gsub("_", " ", names(species_centroid_means)),
+  centroid_size = as.numeric(species_centroid_means)
+)
+
+#append to species_data for downstream analysis
+species_data <-
+  species_data %>%
+  left_join(centroid_size_df, by='species_name')
+```
+
+```{r Fit Splines to All Ribs and Plot them All (Messy)}
+#open a 3D plot window
+open3d()
+
+#loop over the first three specimens
+for (i in 1:171) {
+  coords <- rib_curvature_coordinates_reordered[,,i]
+  
+  #parameterize by landmark index
+  t <- 1:nrow(coords)
+  
+  #fit spline for each coordinate axis
+  fx <- splinefun(t, coords[,1], method = "natural")
+  fy <- splinefun(t, coords[,2], method = "natural")
+  fz <- splinefun(t, coords[,3], method = "natural")
+  
+  #evaluate spline at 25 evenly spaced points
+  t_interp <- seq(1, nrow(coords), length.out = 25)
+  x_spline <- fx(t_interp)
+  y_spline <- fy(t_interp)
+  z_spline <- fz(t_interp)
+  
+  #plot original landmarks
+  points3d(coords, col = 'red', size = 5)
+  
+  #plot spline curve
+  lines3d(x_spline, y_spline, z_spline, col = 'blue', lwd = 2)
+}
+
+#add axis labels
+axes3d()
+title3d(xlab = "X", ylab = "Y", zlab = "Z")
+```
+
+```{r Define a Function to Calculate Kappa curvature at each point (n=25)}
+
+compute_spline_curvature_by_index <- function(coords, specimen_id = NA, n_points = 25) {
+  t <- 1:nrow(coords)
+  
+  #fit 1d natural cubic splines for x, y, and z coordinates
+  fx <- splinefun(t, coords[,1], method = "natural")  #using a natural cubic spline fitting
+  fy <- splinefun(t, coords[,2], method = "natural")
+  fz <- splinefun(t, coords[,3], method = "natural")
+  
+  #interpolate spline fits at evenly spaced points
+  t_interp <- seq(1, nrow(coords), length.out = n_points)
+  x_spline <- fx(t_interp)
+  y_spline <- fy(t_interp)
+  z_spline <- fz(t_interp)
+  
+  #compute first derivatives (tangent vectors)
+  dx1 <- fx(t_interp, deriv = 1)
+  dy1 <- fy(t_interp, deriv = 1)
+  dz1 <- fz(t_interp, deriv = 1)
+  
+  #compute second derivatives (change in tangent vectors)
+  dx2 <- fx(t_interp, deriv = 2)
+  dy2 <- fy(t_interp, deriv = 2)
+  dz2 <- fz(t_interp, deriv = 2)
+  
+  #calculate curvature (kappa) at each interpolated point
+  #using the formula: ||v' × v''|| / ||v'||^3
+  curvature <- sapply(1:n_points, function(i) {
+    v1 <- c(dx1[i], dy1[i], dz1[i])   #first derivative vector
+    v2 <- c(dx2[i], dy2[i], dz2[i])   #second derivative vector
+    cross_prod <- pracma::cross(v1, v2)  #cross product of v' and v''
+    num <- sqrt(sum(cross_prod^2))       #norm of cross product (numerator)
+    denom <- sqrt(sum(v1^2))^3           #cube of norm of first derivative (denominator)
+    if (denom == 0) return(NA)           #avoid division by zero
+    num / denom
+  })
+  
+  list(
+    specimen_id = specimen_id, #to assign each entry with it's respective specimen ID, note has to be specified before running the function
+    spline_points = cbind(x_spline, y_spline, z_spline),
+    curvature = curvature,
+    t_interp = t_interp
+  )
+}
+
+```
+
+```{r Plot Kappa Profiles for All Vertebrae}
+
+#define specimen IDs
+specimen_ids <- dimnames(rib_curvature_coordinates_reordered)[[3]]
+
+#initialize empty lists for results and outliers
+kappa_results_list <- list()
+outliers_list <- list()
+curvature_threshold <- 2
+
+#loop once over all specimens
+for (i in seq_along(specimen_ids)) {
+  coords <- rib_curvature_coordinates_reordered[,,i]
+  result <- compute_spline_curvature_by_index(coords)
+  
+  #assign specimen ID inside the result list
+  result$specimen_id <- specimen_ids[i]
+  
+  max_curv <- max(result$curvature, na.rm = TRUE)
+  
+  if (max_curv > curvature_threshold) {
+    outliers_list[[length(outliers_list) + 1]] <- list(index = i, result = result, max_curvature = max_curv)
+  } else {
+    kappa_results_list[[length(kappa_results_list) + 1]] <- result
+  }
+}
+
+#plot filtered ribs only
+plot(NULL, 
+     xlim = c(1, 12), 
+     ylim = c(0, max(sapply(kappa_results_list, function(x) max(x$curvature, na.rm = TRUE)))), 
+     xlab = "Landmark Index", 
+     ylab = "Curvature (Kappa)",
+     main = "All Precaudal Vertebrae")
+
+alpha_black <- adjustcolor("black", alpha.f = 0.1)
+
+for (i in seq_along(kappa_results_list)) {
+  lines(kappa_results_list[[i]]$t_interp, kappa_results_list[[i]]$curvature, col = alpha_black, lwd = 1)
+}
+
+#create a dataframe of outliers or an empty dataframe if none
+if (length(outliers_list) > 0) {
+  outlier_indices <- sapply(outliers_list, function(x) x$index)
+  outlier_df <- data.frame(
+    index = outlier_indices,
+    max_curvature = sapply(outliers_list, function(x) x$max_curvature),
+    specimen_id = specimen_ids[outlier_indices],
+    stringsAsFactors = FALSE
+  )
+} else {
+  outlier_df <- data.frame(index = integer(0), max_curvature = numeric(0), specimen_id = character(0))
+}
+
+#output dataframe of outliers
+outlier_df
+```
+
+```{r Quantify Global Curvature for Each Rib}
+
+#we can quantify the global curvature by taking and solving the integral for each of spline functions
+#i.e.: ∫ κ(t) dt over the length of the curve, where κ(t) is the curvature function, and t parametrises the curve (the interpolated landmark index).
+
+#define function to integrate according to the trapezoid rule:
+compute_total_curvature <- function(curvature_values, t_interp) {
+  #remove any NA values
+  valid_idx <- !is.na(curvature_values)
+  #numerical integration using trapezoidal rule
+  pracma::trapz(t_interp[valid_idx], curvature_values[valid_idx])
+}
+
+#calculate global curvature for each rib
+total_curvature_list <- numeric(length(kappa_results_list))
+
+for (i in seq_along(kappa_results_list)) {
+  total_curvature_list[i] <- compute_total_curvature(kappa_results_list[[i]]$curvature, 
+                                                    kappa_results_list[[i]]$t_interp)
+}
+
+#create total curvature dataframe
+#get the specimen iDs
+specimen_ids_filtered <- sapply(kappa_results_list, function(x) x$specimen_id)
+
+#assemble dataframe
+total_curvature_df <- data.frame(
+  specimen_id = specimen_ids_filtered,
+  total_curvature = total_curvature_list,
+  stringsAsFactors = FALSE
+)
+
+#print the dataframe
+#total_curvature_df
+
+#wrangling of dataframe to get species
+total_curvature_df$species_name <- sub("^([A-Za-z]+_[a-z]+).*", "\\1", total_curvature_df$specimen_id) #extract Genus_species
+
+#replace underscore with space
+total_curvature_df$species_name <- gsub("_", " ", total_curvature_df$species_name)
+
+#calculate species means
+total_curvature_means <- 
+  total_curvature_df %>%
+  group_by(species_name) %>%
+  summarise(mean_global_curvature = mean(total_curvature),
+            ln_mean_global_curvature = mean(log(total_curvature))) %>%
+  filter(species_name != 'Astatotilapia sp') #remove ruaha blue
+
+
+total_curvature_means
+#convert to dataframe
+total_curvature_means <- as.data.frame(total_curvature_means)
+
+#associate with the rest of the species data
+species_data <- 
+  species_data %>%
+  left_join(total_curvature_means, by='species_name')
+
+species_data <- 
+  species_data %>%
+  mutate(normalised_mean_curvature = mean_global_curvature / centroid_size,
+         ln_normalised_mean_curvature = log(normalised_mean_curvature))
+```
+
+```{r PGLS Model (Rib Curvature ~ Body Elongation)}
+
+#fit OLS model for comparison
+rib_curvature_elongation_ols <- lm(ln_normalised_mean_curvature ~ ln_length_ln_width, data=species_data)
+summary(rib_curvature_elongation_ols)
+
+#fit PGLS model
+#create a comparative data object in caper (i.e. vcv matrix)
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit the PGLS model and estimate lambda via ML
+rib_curvature_elongation_pgls <- pgls(ln_normalised_mean_curvature ~ ln_length_ln_width, comp_data, lambda="ML")
+
+#summarise model fit
+summary(rib_curvature_elongation_pgls)
+```
+
+```{r Plot Rib Curvature against Body Elongation}
+
+ggplot(species_data, aes(x=ln_length_ln_width, y=ln_normalised_mean_curvature))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black")+
+  geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = rib_curvature_elongation_ols$coefficients[[1]], 
+              slope = rib_curvature_elongation_ols$coefficients[[2]], 
+              size = 1, colour = 'black', linetype = 'solid')+ #ols
+   geom_abline(intercept = rib_curvature_elongation_pgls$model$coef[[1]], 
+              slope = rib_curvature_elongation_pgls$model$coef[[2]], 
+              size = 1, colour = 'red', linetype = 'dashed')+ #pgls 
+    scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+```
+
+# Haemal Spine
+
+```{r Import Caudal Vertebral Data}
+
+caudal <- readland.tps("Data/caudal.tps",
+                              specID = c("ID"), readcurves = FALSE)
+
+#drop Chindongo elongatus (broken neural spines)
+caudal <- caudal[, , !grepl("Chindongo_elongatus_", dimnames(caudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+caudal <- caudal[, , !grepl("M_zebra_", dimnames(caudal)[[3]]), drop = FALSE]
+```
+
+```{r Procrustes Superimposition on Caudal Vertebrae}
+
+#general procrustes superimposition on all caudal coordinates
+gpa_caudal <- gpagen(caudal, max.iter = 100)
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.
+}
+
+#assign species names to the array
+dimnames(species_means)[[3]] <- unique_species
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_caudal$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+#create an empty array to store species mean shapes
+species_means <- array(NA, dim = c(dim(gpa_caudal$coords)[1], dim(gpa_caudal$coords)[2], length(unique_species)))
+
+#loop through species and compute mean shape
+for (i in seq_along(unique_species)) {
+  species_means[,,i] <- mshape(gpa_caudal$coords[,,species == unique_species[i]]) #mshape is a function in geomorph that estimates mean shape for a set of ALIGNED specimens.
+}
+
+#assign species names to the array
+dimnames(species_means)[[3]] <- unique_species
+
+#replace underscore _ with ' ' in species_names
+dimnames(species_means)[[3]] <- gsub("_", " ", dimnames(species_means)[[3]])
+```
+
+```{r Define Function to Calculate Hameal Spine Angle (Relative to Centrum)}
+
+#using the cosine rule
+
+#cos^-1(B) = (a^2+c^2-b^2)/2ac, where a, b and c are the euclidean distances of defined landmarks
+haemal_arch_angle <- function(coords) {
+  a <- sqrt(sum((coords[4, ] - coords[13, ])^2))
+  b <- sqrt(sum((coords[4, ] - coords[17, ])^2))
+  c <- sqrt(sum((coords[13, ] - coords[17, ])^2))
+  
+  #cosine rule denominator
+  denom <- 2 * a * c
+  
+  #avoid division by zero or invalid values for acos()
+  if (denom == 0) {
+    return(NA)
+  }
+  
+  #calculate cos(C)
+  cos_angle <- (a^2 + c^2 - b^2) / denom
+  
+  #clamp the value between -1 and 1 to prevent domain error
+  cos_angle <- max(min(cos_angle, 1), -1)
+  
+  #calculate the angle in radians
+  angle_rad <- acos(cos_angle)
+  
+  #convert to degrees (note none are 0 or >2pi)
+  angle_deg <- angle_rad * (180 / pi)
+  
+  return(angle_deg)
+}
+```
+
+```{r Calculate Mean Haemal Arch Angle (Relative to Centrum)}
+
+#calculate the angle of the tip of the neural arch relative to the centrum for all species
+haemal_arch_angles <- apply(species_means, 3, haemal_arch_angle)
+
+#convert into a dataframe for easier manipulation
+haemal_arch_angles_df <- data.frame(
+  species_name = names(haemal_arch_angles),
+  haemal_arch_angle = haemal_arch_angles
+)
+
+#join the angles to the species data
+species_data <- 
+  left_join(species_data, haemal_arch_angles_df, by='species_name')
+```
+
+```{r Fit OLS and PGLS Models to Haemal Spine Angle}
+#fit OLS model
+haemal_spine_angle_elongation_ols <- lm(haemal_arch_angle ~ ln_length_ln_width, data=species_data)
+summary(haemal_spine_angle_elongation_ols)
+
+#fit PGLS model
+#create a comparative data object in caper (i.e. vcv matrix)
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit the PGLS model and estimate lambda via ML
+haemal_spine_angle_elongation_pgls <- pgls(haemal_arch_angle ~ ln_length_ln_width, comp_data, lambda="ML")
+
+#summarise model fit
+summary(haemal_spine_angle_elongation_pgls) 
+```

@@ -1,0 +1,237 @@
+---
+title: "Precaudal Caudal Counts Correlation"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(Morpho)
+require(tidyverse)
+require(mvMORPH)
+require(phytools)
+require(viridis)
+require(rgl) #for 3D visualisation
+require(pracma) #for cross-product calculation (in calculation of kappa)
+require(abind)
+require(shapes)
+require(phytools)
+require(plotrix)
+require(viridis)
+```
+
+```{r Import and Wrangle Data}
+
+#import data from vertebral counts paper
+data <- 
+  readRDS("Data/bucklowetal2025.rds")
+
+#seperate out counts data
+vertebral_counts_data <- as.data.frame(data$matrix_data)
+vertebral_counts_data$species_name <- rownames(vertebral_counts_data)
+
+#qualitative data too
+qual_data <- data$stored_data
+
+#merge
+merged_data <- left_join(vertebral_counts_data, qual_data, by="species_name")
+
+#filter to lake malawi
+lake_malawi <- 
+  merged_data %>%
+  filter(water_system == 'Lake Malawi' | species_name == 'Astatotilapia gigliolii')
+
+#since added some additional species which I have precaudal and caudal counts for
+additional_data <- read.csv("Data/species_data.csv")
+
+#new species
+new_species <- setdiff(additional_data$species_name, lake_malawi$species_name)
+
+#filter additional data
+filtered_additional_data <- 
+  additional_data %>%
+  filter(species_name %in% new_species) %>%
+  filter(species_name != "Astatotilapia sp. 'Ruaha blue'")
+
+#bind??
+lake_malawi_with_additional <- bind_rows(lake_malawi, filtered_additional_data)
+```
+
+```{r Prune The Tree}
+
+#define the tree:
+tree <- read.tree("Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre")
+
+#replace underscores
+tree$tip.label <- gsub("_", " ", tree$tip.label)
+
+#define species to keep 
+species_to_keep <- lake_malawi_with_additional$species_name
+
+#prune the tree:
+pruned_tree <- drop.tip(tree, setdiff(tree$tip.label, species_to_keep))
+
+#reorder dataframe to match tree tips order
+lake_malawi_with_additional <- lake_malawi_with_additional[match(pruned_tree$tip.label,
+                                                                lake_malawi_with_additional$species_name), ]
+```
+
+```{r Fit linear model to Precaudal ~ Caudal}
+#fit an ordinary linear model with no phylogenetic correction
+precaudal_caudal_lm <- lm(precaudal_count ~ caudal_count, data=lake_malawi_with_additional)
+
+#summarise the model
+summary(precaudal_caudal_lm) #ns, no strong correlation between the two counts
+```
+
+```{r Fit PGLS model to Precaudal ~ Caudal}
+
+#reduce dataframe
+new_df <- data.frame(species_name = lake_malawi_with_additional$species_name,
+                     precaudal_count = lake_malawi_with_additional$precaudal_count,
+                     caudal_count = lake_malawi_with_additional$caudal_count)
+
+#create comparative data object
+comp_data <- comparative.data(pruned_tree, new_df, species_name, vcv=TRUE)
+
+#fit pgls model with lambda via ML
+precaudal_caudal_pgls <- caper::pgls(precaudal_count ~ caudal_count, data = comp_data, lambda = 'ML')
+
+#summarise the model
+summary(precaudal_caudal_pgls)
+```
+
+```{r Plot Precaudal and Caudal Counts}
+a1 <- ggplot(lake_malawi_with_additional, aes(x=caudal_count, y=precaudal_count))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black", alpha=0.50)+ #, # position = position_jitter(width = 0.10, height = 0))+
+  geom_abline(intercept = precaudal_caudal_lm$coefficients[[1]], 
+              slope = precaudal_caudal_lm$coefficients[[2]], 
+              size = 0.75, colour = 'black', linetype = 'solid')+ 
+  geom_abline(intercept=precaudal_caudal_pgls$model$coef[[1]], 
+              slope = precaudal_caudal_pgls$model$coef[[2]], 
+              size = 0.75, colour = 'red', linetype = 'dashed')+
+   scale_fill_manual(values = c(
+  "Astatotilapia" = "#E87D72",
+  "not_applicable" = "#E87D72",
+  "Rhamphochromis" = "#51B3E6",
+  "Diplotaxodon" = "grey",
+  "Deep Benthic" = "#BD9C33",
+  "Shallow Benthic" = "#A18BF8",
+  "Utaka" = "#FC61D7",
+  "Mbuna" = "#00C095"
+))+
+   #geom_text(aes(label = species_name),
+                  #size = 1,
+                  #max.overlaps = 2)+
+  xlab("ln[Caudal Count]")+
+  ylab("ln[Precaudal Count]")+
+  coord_cartesian(xlim = c(2.75, 3.05), ylim=c(2.40, 3.00))+
+  theme_classic()+
+  theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a1
+
+ggsave("Figures/precaudal_caudal_correlation.svg", a1, height = 5, width = 10, dpi=2000)
+```
+
+# Plot Tree of Species with Vertebral Shape Data
+
+```{r Data Wrangling II}
+
+#import specimen lengths for ease
+new_data <- read.csv("Data/specimen_lengths.csv")
+
+#species present in the shape dataset
+species_list <- unique(new_data$species_name)
+
+#remove  "Astatotilapia sp. 'Ruaha blue'"
+species_list <- species_list[species_list != "Astatotilapia sp. 'Ruaha blue'"]
+
+#filter data to species only with vertebral shape data
+death <- 
+  lake_malawi_with_additional %>%
+  filter(species_name %in% species_list)
+
+#new pruned tree
+new_pruned_tree <- drop.tip(tree, setdiff(tree$tip.label, species_list))
+
+#check tree and dataframe are aligned
+death$species_name == new_pruned_tree$tip.label
+```
+
+```{r Plot Radial Contmaps for Intro Figure}
+#tree
+tree <- new_pruned_tree
+
+# named trait vectors
+count_vec <- setNames(death$total_count, death$species_name)
+pcc_vec   <- setNames(exp(death$ln_pc_ln_c), death$species_name)  # only if logged
+
+# keep only species present in both traits and the tree
+common <- Reduce(intersect, list(tree$tip.label, names(count_vec), names(pcc_vec)))
+
+tree2 <- drop.tip(tree, setdiff(tree$tip.label, common))
+count_vec <- count_vec[tree2$tip.label]
+pcc_vec   <- pcc_vec[tree2$tip.label]
+
+#setseed
+set.seed(1931)
+
+# build contMap objects
+cm_pcc <- phytools::contMap(tree2, pcc_vec, plot = FALSE)
+cm_pcc <- phytools::setMap(
+  cm_pcc,
+  colorRampPalette(c("#B02418", "white", "#4B2EDD"))(100) #more red means more disproportionate caudal vertebral count
+)
+
+cm_count <- phytools::contMap(tree2, count_vec, plot = FALSE)
+cm_count <- phytools::setMap(
+  cm_count,
+  colorRampPalette(c("#2C7BB6", "#ABD9E9", "#FFFFBF", "#FDAE61", "#D7191C"))(100)
+)
+
+species_vector <- c(
+  "Dimidiochromis compressiceps",
+  "Chindongo elongatus",
+  "Cynotilapia afra",
+  "Diplotaxodon limnothrissa",
+  "Genyochromis mento",
+  "Otopharynx speciosus",
+  "Rhamphochromis longiceps",
+  "Nimbochromis polystigma",
+  "Lethrinops auritus",
+  "Rhamphochromis woodi",
+  "Rhamphochromis esox",
+  "Chindongo virginalis",
+  "Mylochromis melanopterus",
+  "Petrotilapia milomo",
+  "Aulonocara labrosus",
+  "Diplotaxodon greenwoodi"
+)
+
+#export
+svg("Figures/two_contmaps.svg", width = 15, height = 15)
+
+par(mfrow = c(1, 2), mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
+
+#plot total
+plot(cm_count, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi')
+
+#plot pc:c
+plot(cm_pcc, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi')
+
+dev.off()
+```
+

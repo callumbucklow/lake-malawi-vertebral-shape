@@ -1,0 +1,815 @@
+---
+title: "Pleural Rib Geometric Morphometrics"
+author: "Callum Bucklow"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+require(dplyr) #for manipulation of dataframes
+require(stringr) #for useful string codes
+require(geomorph) #for geometric morphometric analysis
+require(ape)
+require(ggplot2)
+require(caper)
+require(Morpho)
+require(tidyverse)
+require(mvMORPH)
+require(phytools)
+require(viridis)
+require(rgl) #for 3D visualisation
+require(pracma) #for cross-product calculation (in calculation of kappa)
+```
+
+```{r Import Data}
+
+precaudal <- readland.tps("Data/precaudal.tps",
+                              specID = c("ID"), readcurves = TRUE)
+
+#drop Chindongo elongatus (broken neural spines)
+precaudal <- precaudal[, , !grepl("Chindongo_elongatus_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop Astatotilapia sp. 'Ruaha blue' (not on tree)
+precaudal <- precaudal[, , !grepl("Astatotilapia_sp", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#drop hybrids
+precaudal <- precaudal[, , !grepl("M_zebra_", dimnames(precaudal)[[3]]), drop = FALSE]
+
+#import species data for specimens
+species_data <- read.csv('Data/species_data.csv')
+
+#remove 'ruaha blue' from species_data
+species_data <- 
+  species_data %>%
+  filter(!species_name %in% c("Astatotilapia sp. 'Ruaha blue'", "Chindongo elongatus")) #ribs are fine for Chindongo elongatus, but it was filtered out of PCA analysis, for consistency remove it here too. 
+
+```
+
+```{r Tree Import}
+
+#import the tree
+tree <- read.tree(file='Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
+
+#remove _ from tip labels
+tree$tip.label <- gsub("_", " ", tree$tip.label)
+
+#prune tree
+tips_to_keep <- species_data$species_name
+
+#prune tree to tips present within data:
+pruned_tree <- keep.tip(tree, intersect(tree$tip.label, tips_to_keep))
+
+#reorder dataframe to match order of tips
+species_data <- species_data[match(pruned_tree$tip.label, species_data$species_name), ]
+
+#remove the damn X column
+species_data <- species_data %>% 
+  dplyr::select(-X)
+```
+
+```{r Procrustes Superimposition on Precaudal Vertebrae (ProcD)}
+#define the sliding landmarks (i.e. for rib-curvature)
+#define sliding landmarks (18 to 27) with fixed landmarks at 16 and 17 -- remember we have redefined 27 (in the original landmark scheme as the tip of the rib as landmark 17 as it is fixed)
+num_sliders <- 10  # Since sliding landmarks are 18 to 27
+precaudal_sliders <- matrix(NA, nrow = num_sliders, ncol = 3)
+
+for (i in 1:num_sliders) {
+  precaudal_sliders[i, ] <- c(17 + i, 17 + i - 1, 17 + i + 1)
+}
+
+#manually adjust first and last row of the matrix:
+precaudal_sliders[1, ] <- c(18, 16, 19)
+precaudal_sliders[10, ] <- c(27, 26, 17)
+
+#general procrustes superimposition on all caudal coordinates
+gpa_precaudal_procd <- gpagen(precaudal, curves = precaudal_sliders, max.iter = 100, ProcD = FALSE) #FALSE here minimises bending energy
+
+#extract specimen IDs
+specimen_ids <- dimnames(gpa_precaudal_procd$coords)[[3]]  #extract specimen names
+species <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)  #extract Genus_species
+
+#filter for unique species
+unique_species <- unique(species)
+
+# Extract centroid sizes for all specimens
+centroid_sizes <- gpa_precaudal_procd$Csize
+
+# Initialize vector to store mean centroid size per species
+species_centroid_means <- numeric(length(unique_species))
+names(species_centroid_means) <- unique_species
+
+# Loop through species and compute mean centroid size
+for (i in seq_along(unique_species)) {
+  species_centroid_means[i] <- mean(centroid_sizes[species == unique_species[i]])
+}
+
+#convert to dataframe
+centroid_size_df <- data.frame(
+  species_name = gsub("_", " ", names(species_centroid_means)),
+  centroid_size = as.numeric(species_centroid_means)
+)
+
+#append to species_data for downstream analysis
+species_data <-
+  species_data %>%
+  left_join(centroid_size_df, by='species_name')
+```
+
+```{r}
+#extract only the rib landmarks from gpa 
+rib_landmarks <- gpa_precaudal_procd$coords[16:27, , ]  # dims: landmarks × dimensions × specimens
+
+#get species names from specimen IDs
+specimen_ids <- dimnames(gpa_precaudal_procd$coords)[[3]]
+species_names <- gsub("(^[A-Za-z]+_[a-z]+).*", "\\1", specimen_ids)
+
+#calculate mean shape per species
+unique_species <- unique(species_names)
+mean_rib_shapes <- array(NA, dim = c(12, 3, length(unique_species)))  
+
+for (i in seq_along(unique_species)) {
+  mean_rib_shapes[,,i] <- mshape(rib_landmarks[,,species_names == unique_species[i]])
+}
+dimnames(mean_rib_shapes)[[3]] <- unique_species
+
+#this should pop-up a 3D plot of all of the aligned coordinates in X,Y,Z space (i.e. GPA of just the ribs)
+#plotAllSpecimens(mean_rib_shapes[,,1:52], 
+                 #label = TRUE, 
+                 #plot.param = list(txt.cex = 2.00, 
+                                   #txt.adj = 5.00, 
+                                   #txt.col = 'red'))
+```
+
+```{r Is Shape Allometrically Scaling?}
+
+#define numeric vector with average precaudal centroid sizes
+species_mean_Csize <- species_centroid_means
+names(species_mean_Csize) <- gsub("_", " ", names(species_mean_Csize))
+
+#reorder vector to match phylogeny tip order
+species_mean_Csize <- species_mean_Csize[match(pruned_tree$tip.label, names(species_mean_Csize))]
+
+#reorder mean rib sizes to match phylogeny:
+dimnames(mean_rib_shapes)[[3]] <- gsub("_", " ", dimnames(mean_rib_shapes)[[3]])
+mean_rib_shapes <- mean_rib_shapes[, , pruned_tree$tip.label]
+
+#run Procrustes regression at the species level
+fit_species <- procD.pgls(mean_rib_shapes ~ log(species_mean_Csize), pruned_tree)
+
+#view results
+summary(fit_species) #no but nonetheless correct for precaudal size for downstream comparisons. 
+
+#take the residuals of the size regression to remove size effects
+shape_resid_species <- arrayspecs(residuals(fit_species), 
+                                  p = dim(mean_rib_shapes)[1], 
+                                  k = dim(mean_rib_shapes)[2])
+
+#rearrange order so ventral tip of the rib is the last landmark
+correct_order <- c(1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 2)
+shape_resid_species <- shape_resid_species[correct_order, , ]
+```
+
+# Does Rib and Precaudal Vertebral Shape Co-evolve?
+
+```{r Import Precaudal Shape Data}
+#import precaudal vertebrae mean procrocrustes coordinates (i.e. for landmarks 1-15)
+species_means_precaudal <- readRDS('Data/species_means_precaudal.rds')
+```
+
+```{r Wrangle Shape Data for Analysis}
+#remove underscore from the species names
+dimnames(mean_rib_shapes)[[3]] <- gsub("_", " ", dimnames(mean_rib_shapes)[[3]])
+
+#rearrange so that the array matches the order of the tips of theb phylogeny
+mean_rib_shapes <- mean_rib_shapes[ , , match(pruned_tree$tip.label, dimnames(mean_rib_shapes)[[3]])]
+
+#rearrange order so ventral tip of the rib is the last landmark
+correct_order <- c(1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 2)
+mean_rib_shapes <- mean_rib_shapes[correct_order, , ]
+
+#visual check... are all landmarks in the correct order now?
+#plotAllSpecimens(mean_rib_shapes, 
+                 #label = TRUE, 
+                 #plot.param = list(txt.cex = 2.00, 
+                                   #txt.adj = 5.00, 
+                                   #txt.col = 'red'))
+
+#repeat for precaudal shape coordinate data
+species_means_precaudal <- species_means_precaudal[ , , match(pruned_tree$tip.label, dimnames(species_means_precaudal)[[3]])]
+```
+
+```{r}
+#run phylogenetic two-block PLS
+pls_res <- phylo.integration(A = mean_rib_shapes, #x
+                             A2 = species_means_precaudal, #y
+                             phy = pruned_tree, 
+                             iter = 99999, #permutations (actually 100000)
+                           seed=1931) #set seed to get same p-value each time
+pls_res
+
+#percentage covariance represented by each PLS axis...
+sv <- pls_res$svd$d     #singular values
+total_cov <- sum(sv^2)     #stotal cross-covariance
+prop_cov <- (sv^2) / total_cov * 100
+prop_cov #percentage per axiss
+```
+
+```{r}
+#extract PLS scores for block 1 (e.g., ribs)
+rib_scores <- pls_res$XScores  # rows = species, columns = PLS axes
+
+#extract PLS scores for block 2 (e.g., vertebrae)
+vertebra_scores <- pls_res$YScores
+
+#create dataframe of PLS scores (keep PLS1 and PLS2) -- PLS2 probably not required
+pls_scores_df <- data.frame(
+  species_name = rownames(pls_res$XScores),
+  rib_PLS1 = rib_scores[, 1],
+  rib_PLS2 = rib_scores[, 2],
+  rib_PLS3 = rib_scores[, 3],
+  rib_PLS4 = rib_scores[, 4],
+  vert_PLS1 = vertebra_scores[, 1],
+  vert_PLS2 = vertebra_scores[, 2],
+  vert_PLS3 = vertebra_scores[, 3],
+  vert_PLS4 = vertebra_scores[, 4]
+)
+
+#append to species_data
+species_data <- 
+  species_data %>%
+  left_join(pls_scores_df, by='species_name')
+
+
+#PLS1
+
+#plot the X (rib) and Y (precaudal vertebrae) scores for PLS1 for each species
+a1 <- ggplot(species_data, aes(x=rib_PLS1, y=vert_PLS1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="red", linetype='dashed')+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("Precaudal Vertebrae (PLS1 - Block X)")+
+  ylab("Pleural Rib (PLS1 - Block Y)")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14),
+      plot.margin = margin(t = 10, r = 10, b = 20, l = 20)
+    )
+a1
+
+ggsave("Figures/precaudal_pleural_rib_pls.svg", a1, height = 5, width = 5)
+
+#PLS2
+
+#plot the X (rib) and Y (precaudal vertebrae) scores for PLS2 for each species
+ggplot(species_data, aes(x=rib_PLS2, y=vert_PLS2))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="black")+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("Precaudal Vertebrae PLS2")+
+  ylab("Pleural Rib PLS2")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+
+
+
+#PLS3
+
+#plot the X (rib) and Y (precaudal vertebrae) scores for PLS3 for each species
+ggplot(species_data, aes(x=rib_PLS3, y=vert_PLS3))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="black")+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("Precaudal Vertebrae PLS3")+
+  ylab("Pleural Rib PLS3")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+
+#PLS4
+
+#plot the X (rib) and Y (precaudal vertebrae) scores for PLS4 for each species
+ggplot(species_data, aes(x=rib_PLS4, y=vert_PLS4))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, colour = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, colour="black")+
+  scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  xlab("Precaudal Vertebrae PLS4")+
+  ylab("Pleural Rib PLS4")+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+
+
+#run correlation tests for the first 4 axes
+pvals <- sapply(1:4, function(i) {
+  test <- cor.test(rib_scores[, i], vertebra_scores[, i])
+  c(r = unname(test$estimate),
+    p = test$p.value)
+})
+pvals
+
+```
+
+```{r Define Links for Visualisation}
+#will connect landmarks with lines to make visualisation easier
+links_precaudal <- rbind(
+  c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8))
+
+#will connect landmarks with lines to make visualisation easier
+links_ribs <- rbind(
+  c(1, 2),
+  c(2, 3),
+  c(3, 4),
+  c(4, 5),
+  c(5, 6),
+  c(6, 7),
+  c(7, 8),
+  c(8, 9),
+  c(9, 10),
+  c(10, 11),
+  c(11, 12)
+)
+```
+
+```{r}
+#extract the loadings for the ribs and vertebrae for PLS1
+#number of loadings is n*3, where n is the number of landmarks. 3 comes from x, y, z. 
+pls1_ribs <- pls_res$left.pls.vectors[, 1] #
+pls1_vertebrae <- pls_res$right.pls.vectors[, 1]
+
+#reshape
+n_landmarks_ribs <- dim(mean_rib_shapes)[1]
+n_landmarks_verts <- dim(species_means_precaudal)[1]
+
+#convert to matrix (represents landmark and axes displacement along PLS1)
+pls1_ribs_matrix <- matrix(pls1_ribs, ncol = 3, byrow = TRUE)
+pls1_vertebrae_matrix <- matrix(pls1_vertebrae, ncol = 3, byrow = TRUE)
+
+#calculate mean shape for ribs and precaudal vertebrae (i.e. grand mean)
+mean_rib <- apply(mean_rib_shapes, c(1, 2), mean)
+mean_precaudal <- apply(species_means_precaudal, c(1, 2), mean)
+
+#define a scale factor to emphasise the shape change
+scale_factor <- 0.25 
+
+#calculate deformation relative to the mean shape
+#ribs
+shape_ribs_low  <- mean_rib - 0.10 * pls1_ribs_matrix
+shape_ribs_high <- mean_rib + scale_factor * pls1_ribs_matrix
+
+#precaudal vertebrae
+shape_vertebrae_low  <- mean_precaudal - scale_factor * pls1_vertebrae_matrix
+shape_vertebrae_high <- mean_precaudal + scale_factor * pls1_vertebrae_matrix
+
+#visualisation of shape change along PLS1
+#ribs
+plotRefToTarget(shape_ribs_low, shape_ribs_high, method = "point", mag = 0.50, label = FALSE, axes = FALSE, links = links_ribs, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50, tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2, tar.pt.size=0.50))
+
+#vertebrae
+plotRefToTarget(shape_vertebrae_low, shape_vertebrae_high, method = "point", mag = 0.50, label = FALSE, axes = FALSE, links = links_precaudal, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50, tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2, tar.pt.size=0.50))
+ #moderate displacement seems to be associated with very landmark (more or less), reflecting an integrated morphological change rather than isolated shifts at single landmarks? Global shape transformations? Landmarks corresponding to the upper and lower curves of the ribs shift in a consistent manner, suggesting an overall bending or elongation pattern rather than localised shape changes?
+```
+
+```{r Does the Shape Covariation Correlate with Body Elongation?}
+
+#calculate a shared PLS1 value by scaling and averaging the block scores
+species_data <- 
+  species_data %>%
+  mutate(scaled_vert_PLS1 = scale(vert_PLS1),
+         scaled_rib_PLS1 = scale(rib_PLS1), #the rib and vert PLS1 scores are on different scales, so simply averging them would favour the block with the wider scale
+         shared_scaled_PLS1 = (scaled_vert_PLS1 + scaled_rib_PLS1)/2) #take the average score between the two scaled block scores. Will represent Z scores of covariation. 
+
+#create comparative data object 
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit pgls model
+pls1_shared_elongation_pgls <- pgls(shared_scaled_PLS1 ~ ln_length_ln_width, data = comp_data, lambda = "ML")
+
+#summarise the model fit
+summary(pls1_shared_elongation_pgls)
+```
+
+# Correlation of Rib Shape Rib
+
+```{r PCA on Rib Shape Variation (Centroid Size Corrected Residuals)}
+#convert 3D array to 2D matrix for PCA on log(centroid size) regressed rib residuals
+rib_mean_matrix <- two.d.array(shape_resid_species)
+
+#run PCA
+pca_rib <- gm.prcomp(rib_mean_matrix, phy=NULL, GLS = FALSE, transform = FALSE)
+
+#summary
+summary(pca_rib)
+
+#convert PC scores to dataframe
+pca_rib_scores <- data.frame(pca_rib$x)
+
+#keep on first four PCs
+pca_rib_scores <-
+  pca_rib_scores %>%
+  dplyr::select(rib_PC1 = Comp1, 
+                rib_PC2 = Comp2, 
+                rib_PC3 = Comp3, 
+                rib_PC4 = Comp4)
+pca_rib_scores$species_name <- rownames(pca_rib$x)
+pca_rib_scores$species_name <- gsub("_", " ", pca_rib_scores$species_name)
+
+#bind to species data
+species_data <- 
+  species_data %>%
+  left_join(pca_rib_scores, by='species_name')
+```
+
+```{r Define Function to Extract Most Influential Coordinates}
+#function will identify and extract the top ten coordinates (X,Y,Z), and associated landmarks (1-27), contributing to each defined PC.
+extract_top_contributors <- function(pca_object, num_pcs = 5, top_n = 5) {
+  #define number of landmarks and coordinate system
+  num_landmarks <- 12  #12 shared landmarks (2 fixed + 10 sliding)
+  num_coords <- 3  #X,Y,Z
+  
+  #generate landmark and coordinate mapping
+  landmark_indices <- rep(1:num_landmarks, each = num_coords)
+  coordinates <- rep(c("X", "Y", "Z"), times = num_landmarks)
+  
+  #initialize a list to store results
+  results <- list()
+  
+  for (pc in 1:num_pcs) {
+    #extract loadings for the current PC
+    pc_loadings <- pca_object$rotation[, pc]
+    abs_pc_loadings <- abs(pc_loadings) #using absolute to capture both positive and negative loadings 
+    
+    #sort by order of magnitude (regardless of +ve or -ve loading)
+    sorted_indices <- order(abs_pc_loadings, decreasing = TRUE)
+    
+    #extract top coordinates according to absolute loading, number is defined above (top_n) 
+    top_contributors <- sorted_indices[1:top_n]
+    
+    #assemble results into a dataframe for easy view
+    pc_df <- data.frame(
+      PC = rep(pc, top_n),
+      landmark = landmark_indices[top_contributors],
+      coordinate = coordinates[top_contributors],
+      loading = pc_loadings[top_contributors],
+      absolute_loading = abs_pc_loadings[top_contributors]
+    )
+    
+    #store in results list
+    results[[paste0("PC", pc)]] <- pc_df
+  }
+  
+  #combine into a single dataframe
+  final_df <- do.call(rbind, results)
+  return(final_df)
+}
+```
+
+```{r Extract Influential Landmarks/Coordinates (PC1-PC4 - Ribs)}
+#extract the most influential coordinates/landmarks for PC1:PC4 (collectively explains ~90% of variation)
+top_landmarks_rib <- extract_top_contributors(pca_rib, num_pcs = 4, top_n = 5)
+
+#convert dataframe to a list of lists
+top_landmarks_rib_list <- split(top_landmarks_rib, top_landmarks_rib$PC)
+names(top_landmarks_rib_list) <- paste0("PC", names(top_landmarks_rib_list))
+
+#access lists
+top_landmarks_rib_list$PC1
+top_landmarks_rib_list$PC2 #etc.
+top_landmarks_rib_list$PC3 #etc.
+top_landmarks_rib_list$PC4 #etc.
+
+#assemble into dataframe
+rib_top_landmarks <- rbind(top_landmarks_rib_list$PC1, top_landmarks_rib_list$PC2,top_landmarks_rib_list$PC3, top_landmarks_rib_list$PC4)
+
+#export as CSV file
+write.csv(rib_top_landmarks, 'Data/rib_top_landmarks.csv')
+```
+
+# Visualising Rib PC Shape Change
+
+```{r Plot Vectors of PC1 SD to Visualise Shape Change}
+
+#will connect landmarks with lines to make visualisation easier
+links <- rbind(
+  c(1, 2),
+  c(2, 3),
+  c(3, 4),
+  c(4, 5),
+  c(5, 6),
+  c(6, 7),
+  c(7, 8),
+  c(8, 9),
+  c(9, 10),
+  c(10, 11),
+  c(11, 12)
+)
+
+#convert mean shape into a matrix
+mean_shape <- mshape(mean_rib_shapes)
+colnames(mean_shape) <- c("X", "Y", "Z")
+
+#extract PC1 loadings vector (i.e. the rotations matrix)
+pc1_vector <- pca_rib$rotation[, 1]
+pc1_matrix <- matrix(pc1_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc1 <- sd(pca_rib$x[, 1])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc1_shape_plus  <- mean_shape + 2 * sd_pc1 * pc1_matrix
+pc1_shape_minus <- mean_shape - 2 * sd_pc1 * pc1_matrix
+
+#visualize shape change along PC1
+plotRefToTarget(mean_shape, pc1_shape_plus, method = "point", mag = 2, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2,
+                                    tar.pt.size=0.50)) #larger PC1
+
+plotRefToTarget(mean_shape, pc1_shape_minus, method = "point", mag = 3, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 2, pt.size=0.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 2,
+                                    tar.pt.size=0.50)) #smaller PC1
+
+#for figure -- difficult to visualise 
+plotRefToTarget(mean_shape, pc1_shape_plus, method = "point", mag = 2, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "white", link.col="white", link.lwd = 0.01, pt.size=0.01,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 10,
+                                    tar.pt.size=3.00)) #larger PC1
+
+plotRefToTarget(mean_shape, pc1_shape_minus, method = "point", mag = 3, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "white", link.col="white", link.lwd = 0.01, pt.size=0.01,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 8,
+                                    tar.pt.size=2.00)) #smaller PC1
+
+
+```
+
+```{r Plot Vectors of PC2 SD to Visualise Shape Change}
+#extract PC2 loadings vector (i.e. the rotations matrix)
+pc2_vector <- pca_rib$rotation[, 2]
+pc2_matrix <- matrix(pc2_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc2 <- sd(pca_rib$x[, 2])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc2_shape_plus  <- mean_shape + 2 * sd_pc2 * pc2_matrix
+pc2_shape_minus <- mean_shape - 2 * sd_pc2 * pc2_matrix
+
+#visualize shape change along PC2
+plotRefToTarget(mean_shape, pc2_shape_plus, method = "points", mag = 2, label = TRUE, axes = TRUE, links=links) #larger PC2
+plotRefToTarget(mean_shape, pc2_shape_minus, method = "points", mag = 2, label = TRUE, axes = TRUE, links=links) #smaller PC2
+```
+
+```{r Plot Vectors of PC3 SD to Visualise Shape Change}
+#extract PC3 loadings vector (i.e. the rotations matrix)
+pc3_vector <- pca_rib$rotation[, 3]
+pc3_matrix <- matrix(pc3_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc3 <- sd(pca_rib$x[, 3])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc3_shape_plus  <- mean_shape + 2 * sd_pc3 * pc3_matrix
+pc3_shape_minus <- mean_shape - 2 * sd_pc3 * pc3_matrix
+
+#visualize shape change along PC3
+plotRefToTarget(mean_shape, pc3_shape_plus, method = "points", mag = 3, label = TRUE, axes = TRUE, links=links) #larger PC3
+plotRefToTarget(mean_shape, pc3_shape_minus, method = "points", mag = 3, label = TRUE, axes = TRUE, links=links) #smaller PC3
+```
+
+```{r Plot Vectors of PC4 SD to Visualise Shape Change}
+#extract pc4 loadings vector (i.e. the rotations matrix)
+pc4_vector <- pca_rib$rotation[, 4]
+pc4_matrix <- matrix(pc4_vector, ncol = 3, byrow = TRUE)
+
+#calculate the SD of PC4 scores (variation in your dataset)
+sd_pc4 <- sd(pca_rib$x[, 4])
+
+#create shapes representing mean shape ± 2 SD along PC4
+pc4_shape_plus  <- mean_shape + 2 * sd_pc4 * pc4_matrix
+pc4_shape_minus <- mean_shape - 2 * sd_pc4 * pc4_matrix
+
+#visualize shape change along PC4
+plotRefToTarget(mean_shape, pc4_shape_plus, method = "points", mag = 2, label = TRUE, axes = TRUE, links=links) #larger PC1
+plotRefToTarget(mean_shape, pc4_shape_minus, method = "points", mag = 2, label = TRUE, axes = TRUE, links=links) #smaller PC1
+```
+
+# Rib Shape Co-Evolves with Body Elongation?
+
+```{r Fit PGLS Model on Size-Corrected Caudal Shape Residuals}
+#define numerical vector of body aspect ratios
+ln_length_ln_width <- species_data$ln_length_ln_width
+names(ln_length_ln_width) <- species_data$species_name
+
+#fit the model
+procd_pgls_pleural_rib_size_corrected_body_elongation <- procD.pgls(shape_resid_species ~ ln_length_ln_width, pruned_tree, iter = 99999, seed=1931)
+summary(procd_pgls_pleural_rib_size_corrected_body_elongation)
+```
+
+```{r}
+#fit multivariate model testing whether variation in rib shape can be explained by body elongation
+fit_full <- mvgls(
+  cbind(rib_PC1, rib_PC2, rib_PC3, rib_PC4) ~ ln_length_ln_width,
+  data = species_data,
+  tree = pruned_tree,
+  model = "lambda",
+  method = "LL"
+)
+
+summary(fit_full)
+#MANOVA to test significance of model
+manova.gls(fit_full, test=c("Pillai"), adjust='holm')
+```
+
+```{r Fitting Individual PGLS models to Caudal PCs}
+#create comparative data object 
+comp_data <- comparative.data(pruned_tree, species_data, species_name, vcv=TRUE)
+
+#fit individual pgls models to the PCs to test which PCs elongation best explains
+rib_individual_PC_elongation_models <- lapply(paste0("rib_PC", 1:4), function(pc) {
+  formula <- as.formula(paste(pc, "~ ln_length_ln_width"))
+  model <- pgls(formula, data = comp_data, lambda = "ML")
+  summary(model)
+})
+names(rib_individual_PC_elongation_models) <- paste0("rib_PC", 1:4)
+
+#print out summaries of each model
+rib_individual_PC_elongation_models$rib_PC1 #SIG
+rib_individual_PC_elongation_models$rib_PC2 #NS
+rib_individual_PC_elongation_models$rib_PC3 #SIG
+rib_individual_PC_elongation_models$rib_PC4 #NS
+
+#extract p-values for multiple testing
+p_values <- sapply(rib_individual_PC_elongation_models, function(mod_summary) {
+  # Extract p-value for the slope (usually 2nd row, 4th column in coef table)
+  coef_table <- mod_summary$coefficients
+  p_val <- coef_table[2, "Pr(>|t|)"]
+  return(p_val)
+})
+
+#multiple testing correction
+p_adj_bonf <- p.adjust(p_values, method = "bonferroni")
+p_adj_BH <- p.adjust(p_values, method = "BH")
+
+#assemble into dataframe
+data.frame(
+  PC = names(p_values),
+  p_value = p_values,
+  p_bonferroni = p_adj_bonf,
+  p_BH = p_adj_BH
+)
+```
+
+```{r Plot PC1 and PC3 against Body Elongation (Pleural Ribs)}
+#fit ols model for plotting
+rib_pc1_elongation_ols <- lm(rib_PC1 ~ ln_length_ln_width, data = species_data)
+summary(rib_pc1_elongation_ols)
+
+a1 <- ggplot(species_data, aes(x=ln_length_ln_width, y=rib_PC1))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = rib_pc1_elongation_ols$coefficients[[1]], 
+              slope =rib_pc1_elongation_ols$coefficients[[2]], 
+              size = 1, colour = 'black', linetype = 'solid')+ #ols
+  geom_abline(intercept = 
+rib_individual_PC_elongation_models$rib_PC1$coefficients[[1]], 
+              slope = 
+rib_individual_PC_elongation_models$rib_PC1$coefficients[[2]], 
+              size = 1, colour = 'red', linetype = 'dashed')+ #pgls
+    xlab('ln[Length]-ln[Depth]')+
+    ylab('Pleural Rib PC1 (54.71%)')+
+    scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  theme_classic()+
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a1
+ggsave("Figures/pleural_rib_pc1_body_elongation.svg", a1, height=5, width = 5)
+
+
+#fit ols model for plotting
+rib_pc3_elongation_ols <- lm(rib_PC3 ~ ln_length_ln_width, data = species_data)
+summary(rib_pc3_elongation_ols)
+
+a2 <- ggplot(species_data, aes(x=ln_length_ln_width, y=rib_PC3))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 4, color = "black")+
+  #geom_text(aes(label = species_name), size = 1.5, vjust = -0.5)+ #add species names
+  geom_abline(intercept = rib_pc3_elongation_ols$coefficients[[1]], 
+              slope = rib_pc3_elongation_ols$coefficients[[2]], 
+              size = 1, colour = 'black', linetype = 'solid')+ #ols
+  geom_abline(intercept = 
+rib_individual_PC_elongation_models$rib_PC3$coefficients[[1]], 
+              slope = 
+rib_individual_PC_elongation_models$rib_PC3$coefficients[[2]], 
+              size = 1, colour = 'red', linetype = 'dashed')+ #pgls
+    xlab('ln[Length]-ln[Depth]')+
+    ylab('Pleural Rib PC3 (11.51%)')+
+    scale_fill_manual(values = c(
+      "Astatotilapia" = "#E87D72",
+      "Rhamphochromis" = "#51B3E6",
+      "Diplotaxodon" = "grey",
+      "Deep Benthic" = "#BD9C33",
+      "Shallow Benthic" = "#A18BF8",
+      "Utaka" = "#FC61D7",
+      "Mbuna" = "#00C095"
+    ))+
+  theme_classic()+ 
+    theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title = element_text(size = 14, face = "bold"),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14))
+a2
+
+ggsave("Figures/pleural_rib_pc3_body_elongation.svg", a2, height=5, width = 5)
+```
+
+```{r Import Precaudal and Caudal PC Scores}
+
+#import the data
+precaudal_caudal_pc_scores <- 
+  read.csv('Data/precaudal_caudal_pc_scores.csv')
+
+#remove the damn X column
+precaudal_caudal_pc_scores <- precaudal_caudal_pc_scores %>% 
+  dplyr::select(-X)
+
+#append to the species data dataframe
+species_data <- 
+  species_data %>%
+  left_join(precaudal_caudal_pc_scores, by='species_name')
+```
+
+
+
+
+
+
