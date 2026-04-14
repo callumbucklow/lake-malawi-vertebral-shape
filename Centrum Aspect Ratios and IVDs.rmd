@@ -423,6 +423,4 @@ plmm_pc_c_car <- pglmm(
 )
 
 summary(plmm_pc_c_car)
-
-packageVersion("ape")
 ```
