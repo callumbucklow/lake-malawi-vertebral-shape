@@ -193,7 +193,7 @@ set.seed(1931) #this is useful for making sure the same colours are picked each 
 cm_pcc <- phytools::contMap(tree2, pcc_vec, plot = FALSE)
 cm_pcc <- phytools::setMap(
   cm_pcc,
-  colorRampPalette(c("#B02418", "white", "#4B2EDD"))(100) #more red means more disproportionate caudal vertebral count
+  colorRampPalette(c("#B02418", "white", "#4B2EDD"))(100) #more red means more disproportionate caudal vertebral count. White is roughly the average.
 )
 
 cm_count <- phytools::contMap(tree2, count_vec, plot = FALSE)
@@ -202,24 +202,25 @@ cm_count <- phytools::setMap(
   colorRampPalette(c("#2C7BB6", "#ABD9E9", "#FFFFBF", "#FDAE61", "#D7191C"))(100)
 )
 
-species_vector <- c(
-  "Dimidiochromis compressiceps",
-  "Chindongo elongatus",
-  "Cynotilapia afra",
-  "Diplotaxodon limnothrissa",
-  "Genyochromis mento",
-  "Otopharynx speciosus",
-  "Rhamphochromis longiceps",
-  "Nimbochromis polystigma",
-  "Lethrinops auritus",
-  "Rhamphochromis woodi",
-  "Rhamphochromis esox",
-  "Chindongo virginalis",
-  "Mylochromis melanopterus",
-  "Petrotilapia milomo",
-  "Aulonocara labrosus",
-  "Diplotaxodon greenwoodi"
-)
+#define ecomorphology colours to colour the tips of the phylogeny
+ecomorphology_colours <- c("Astatotilapia" = "#E87D72",
+  "not_applicable" = "#E87D72",
+  "Rhamphochromis" = "#51B3E6",
+  "Diplotaxodon" = "grey",
+  "Deep Benthic" = "#BD9C33",
+  "Shallow Benthic" = "#A18BF8",
+  "Utaka" = "#FC61D7",
+  "Mbuna" = "#00C095")
+
+#name ecology by species
+eco_vec <- setNames(death$lm_ecology, death$species_name)
+
+#keep only species in pruned tree and in correct order
+eco_vec <- eco_vec[tree2$tip.label]
+
+#map colours
+tip_colours <- unname(ecomorphology_colours[as.character(eco_vec)])
+length(tip_colours) == Ntip(tree2)
 
 #export
 svg("Figures/two_contmaps.svg", width = 15, height = 15)
@@ -227,10 +228,10 @@ svg("Figures/two_contmaps.svg", width = 15, height = 15)
 par(mfrow = c(1, 2), mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
 
 #plot total
-plot(cm_count, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi')
+plot(cm_count, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi', tip.color = tip_colours)
 
 #plot pc:c
-plot(cm_pcc, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi')
+plot(cm_pcc, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi', tip.color = tip_colours) #tip colours don
 
 dev.off()
 ```

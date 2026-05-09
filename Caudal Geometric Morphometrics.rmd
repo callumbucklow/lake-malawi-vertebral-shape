@@ -464,7 +464,7 @@ fit_full <- mvgls(
 fit_full
 
 #MANOVA to test significance of model
-manova.gls(fit_full, test=c("Pillai"), adjust='holm', nperm = 10000)
+#manova.gls(fit_full, test=c("Pillai"), adjust='holm', nperm = 10000)
 
 #pairwise comparisons
 #pw_res <- pairwise.glh(fit_full, term=1, test=c("Pillai"), adjust='holm', nperm=10000, nbcores=5)
@@ -486,6 +486,77 @@ names(ln_standard_length) <- species_data$species_name
 procd_pgls_caudal_size_corrected_body_elongation <- procD.pgls(shape_resid_species ~ ln_length_ln_width + ln_standard_length, pruned_tree, iter = 99999, seed=1931)
 summary(procd_pgls_caudal_size_corrected_body_elongation)
 ```
+
+```{r Define Links for Visualisation}
+#will connect landmarks with lines to make visualisation easier
+links <- rbind(
+  c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8),
+  c(6, 7))
+```
+
+```{r Plotting Caudal Shape Change Across Elongation Axis}
+
+#flatten array
+A <- simplify2array(species_means_caudal)
+X <- cbind(ln_length_ln_width, ln_standard_length)
+
+#define aspect ratio quantiles
+qs <- quantile(ln_length_ln_width, probs = c(0, 0.33, 0.66, 1))
+
+#predict shape changes along the axis
+pred <- shape.predictor(
+  A = A,
+  x = X,
+  Intercept = TRUE,
+  pred1 = c(qs[1], mean(ln_standard_length)),
+  pred2 = c(qs[2], mean(ln_standard_length)),
+  pred3 = c(qs[3], mean(ln_standard_length)),
+  pred4 = c(qs[4], mean(ln_standard_length))
+)
+
+#0.00
+plotRefToTarget(pred$pred1, mean_shape, method = "point", mag = 2.5, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "#C00000", link.col="#C00000", link.lwd = 3, pt.size=1.5,
+                                    tar.pt.bg = "grey", tar.link.col="grey", tar.link.lwd = 3, tar.pt.size=1.5))
+
+
+#0.33
+plotRefToTarget(pred$pred2, mean_shape, method = "point", mag = 2.5, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "#C00000", link.col="#C00000", link.lwd = 3, pt.size=1.5,
+                                    tar.pt.bg = "grey", tar.link.col="grey", tar.link.lwd = 3, tar.pt.size=1.5))
+
+
+#0.66
+plotRefToTarget(pred$pred3, mean_shape, method = "point", mag = 2.5, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "#C00000", link.col="#C00000", link.lwd = 3, pt.size=1.5,
+                                    tar.pt.bg = "grey", tar.link.col="grey", tar.link.lwd = 3, tar.pt.size=1.5))
+
+#1.00
+plotRefToTarget(pred$pred4, mean_shape, method = "point", mag = 2.5, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "#C00000", link.col="#C00000", link.lwd = 3, pt.size=1.5,
+                                    tar.pt.bg = "grey", tar.link.col="grey", tar.link.lwd = 3, tar.pt.size=1.5))
+
+#1.00
+plotRefToTarget(pred$pred1, pred$pred4, method = "point", mag = 2.5, label = FALSE, axes = FALSE, links=links, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 3, pt.size=2,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 3, tar.pt.size=2))
+```
+
+```{r}
+
+
+```
+
 
 ```{r Fitting Individual PGLS models to caudal PCs (ln_length_ln_width)}
 #create comparative data object 

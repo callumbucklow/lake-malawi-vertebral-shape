@@ -83,7 +83,7 @@ species_data <-
 #specify tree
 tree <- read.tree('Trees/phylogenies_mcgee_2020/phylogeny_mcgee_2020.tre')
 
-#sort out tip labels of the tree
+#sort out tip labels of the tree because they have underscores in them
 tree$tip.label <- gsub('_', " ", tree$tip.label)
 
 #prune the phylogenetic tree
@@ -249,11 +249,11 @@ df_partial$predictor <- factor(df_partial$predictor,
 #plot partial regressions
 a1 <- ggplot(df_partial, aes(x = x, y = y))+
   geom_point(aes(fill = lm_ecology), shape = 21, size = 3, colour = "black")+
-  geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
+  #geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
   geom_smooth(method = "lm", formula=y~x, se = FALSE, colour = "red", linetype='dashed')+
   facet_wrap(~predictor, scales = "free_x"
              )+
-  labs(x = "Partial Predictor", y = "Partial ln[Length] - ln[Width]")+
+  labs(x = "Partial Predictor", y = "Partial ln[Length] - ln[Depth]")+
    scale_fill_manual(values = c("Astatotilapia" = "#E87D72", 
                                 "not_applicable" = "#E87D72", 
                                 "Rhamphochromis" = "#51B3E6",
@@ -272,7 +272,8 @@ a1
 
 ggsave('Figures/partial_regression_body_aspect_ratio.svg', a1, height=5, width=10)
 ```
-Testing Lake Malawi Slope versus Whole Subfamily
+
+# Testing Lake Malawi Slope versus Whole Subfamily
 
 ```{r Import Data for Whole Subfamily}
 

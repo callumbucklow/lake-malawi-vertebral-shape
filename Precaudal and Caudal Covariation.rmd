@@ -270,6 +270,192 @@ shape_resid_species_caudal <- arrayspecs(residuals(fit_species_caudal),
                                   k = dim(species_means_caudal)[2])
 ```
 
+# Correlation of Shape Variation and Body Elongation
+
+```{r Import Length Data}
+
+specimen_lengths <- read.csv('Data/specimen_lengths.csv')
+
+#summarise as average for each species
+species_specimen_lengths <- specimen_lengths %>%
+  dplyr::group_by(species_name) %>%
+  dplyr::summarise(
+    ln_standard_length = mean(ln_standard_length, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#bind the standard lengths as well
+species_data <- species_data %>%
+  left_join(species_specimen_lengths %>%
+              dplyr::select(species_name, ln_standard_length),
+            by = "species_name")
+
+```
+
+```{r Fit PGLS Model on Size-Corrected Caudal Shape Residuals}
+#define numerical vector of body aspect ratios
+ln_length_ln_width <- species_data$ln_length_ln_width
+names(ln_length_ln_width) <- species_data$species_name
+
+#check specimen lengths as well
+ln_standard_length <- species_data$ln_standard_length
+names(ln_standard_length) <- species_data$species_name
+
+#fit the model (precaudal)
+procd_pgls_caudal_size_corrected_body_elongation_precaudal <- procD.pgls(shape_resid_species_precaudal ~ ln_length_ln_width + ln_standard_length, pruned_tree, iter = 99999, seed=1931)
+summary(procd_pgls_caudal_size_corrected_body_elongation_precaudal)
+
+#fit the model (Caudal)
+procd_pgls_caudal_size_corrected_body_elongation_caudal <- procD.pgls(shape_resid_species_caudal ~ ln_length_ln_width + ln_standard_length, pruned_tree, iter = 99999, seed=1931)
+summary(procd_pgls_caudal_size_corrected_body_elongation_caudal)
+
+```
+
+
+
+```{r Define Links for Visualisation}
+#will connect landmarks with lines to make visualisation easier
+links_precaudal <- rbind(
+  c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8),
+  c(16, 18),
+  c(18, 19),
+  c(19, 20),
+  c(20, 21),
+  c(21, 22),
+  c(22, 23),
+  c(23, 24),
+  c(24, 25),
+  c(25, 26),
+  c(26, 27),
+  c(27, 17))
+
+links_caudal <- rbind(
+   c(1, 2),
+  c(1, 11),
+  c(2, 11),
+  c(3, 4),
+  c(3, 5),
+  c(4, 5),
+  c(12, 13),
+  c(12, 14),
+  c(13, 14),
+  c(5, 14),
+  c(4, 15),
+  c(15, 13),
+  c(3, 8),
+  c(8, 12),
+  c(11, 8),
+  c(2, 8),
+  c(16, 17)
+)
+```
+
+```{r Plotting Caudal Shape Change Across Elongation Axis (Precaudal)}
+
+#flatten array
+A <- simplify2array(species_means_precaudal)
+X <- cbind(ln_length_ln_width, ln_standard_length)
+
+#define aspect ratio quantiles
+qs <- quantile(ln_length_ln_width, probs = c(0, 0.33, 0.66, 1))
+
+#predict shape changes along the axis
+pred <- shape.predictor(
+  A = A,
+  x = X,
+  Intercept = TRUE,
+  pred1 = c(qs[1], mean(ln_standard_length)),
+  pred2 = c(qs[2], mean(ln_standard_length)),
+  pred3 = c(qs[3], mean(ln_standard_length)),
+  pred4 = c(qs[4], mean(ln_standard_length))
+)
+
+#1.00
+plotRefToTarget(pred$pred1, pred$pred4, method = "point", mag = 1, label = FALSE, axes = FALSE, links=links_precaudal, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 3, pt.size=1.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 3, tar.pt.size=1.50))
+```
+
+```{r Plotting Caudal Shape Change Across Elongation Axis (Caudal)}
+
+#flatten array
+A <- simplify2array(species_means_caudal)
+X <- cbind(ln_length_ln_width, ln_standard_length)
+
+#define aspect ratio quantiles
+qs <- quantile(ln_length_ln_width, probs = c(0, 0.33, 0.66, 1))
+
+#predict shape changes along the axis
+pred <- shape.predictor(
+  A = A,
+  x = X,
+  Intercept = TRUE,
+  pred1 = c(qs[1], mean(ln_standard_length)),
+  pred2 = c(qs[2], mean(ln_standard_length)),
+  pred3 = c(qs[3], mean(ln_standard_length)),
+  pred4 = c(qs[4], mean(ln_standard_length))
+)
+
+#1.00
+plotRefToTarget(pred$pred1, pred$pred4, method = "point", mag = 1.5, label = FALSE, axes = FALSE, links=links_caudal, gridPars = gridPar(pt.bg = "grey", link.col="grey", link.lwd = 3, pt.size=1.50,
+                                    tar.pt.bg = "red", tar.link.col="red", tar.link.lwd = 3, tar.pt.size=1.50))
+```
+
+```{r Checking Robustness of Shape Variation and Whole Body Elongation}
+
+#z-scores
+z_scores <- scale(ln_length_ln_width)
+
+#isolate species with body aspect ratios >1.5SDs from the mean 
+extreme_species <- names(ln_length_ln_width)[abs(z_scores) > 1.5] #includes all of Rhamphochromis, D. limnothrissa and L. gossei.
+
+#drop extreme species from tree
+tree_no_extremes <- drop.tip(pruned_tree, extreme_species)
+
+#subset data
+keep <- !(species_data$species_name %in% extreme_species)
+
+#keep species not to be excluded
+shape_pre_no_ext <- shape_resid_species_precaudal[ , , keep]
+shape_caud_no_ext <- shape_resid_species_caudal[ , , keep]
+
+ln_ratio_no_ext <- ln_length_ln_width[keep]
+ln_sl_no_ext <- ln_standard_length[keep]
+
+#refit models
+model_pre_no_ext <- procD.pgls(
+  shape_pre_no_ext ~ ln_ratio_no_ext + ln_sl_no_ext,
+  tree_no_extremes,
+  iter = 99999,
+  seed = 1931
+)
+
+model_caud_no_ext <- procD.pgls(
+  shape_caud_no_ext ~ ln_ratio_no_ext + ln_sl_no_ext,
+  tree_no_extremes,
+  iter = 99999,
+  seed = 1931
+)
+
+#summary of the models
+summary(model_pre_no_ext)
+summary(model_caud_no_ext)
+```
+
 # Precaudal and Caudal Shape Covariation
 
 ```{r Phylogenetic Two Block - PLS}
@@ -367,58 +553,6 @@ pvals <- sapply(1:2, function(i) {
     p = test$p.value)
 })
 pvals
-```
-
-```{r Define Links for Visualisation}
-#will connect landmarks with lines to make visualisation easier
-links_precaudal <- rbind(
-  c(1, 2),
-  c(1, 11),
-  c(2, 11),
-  c(3, 4),
-  c(3, 5),
-  c(4, 5),
-  c(12, 13),
-  c(12, 14),
-  c(13, 14),
-  c(5, 14),
-  c(4, 15),
-  c(15, 13),
-  c(3, 8),
-  c(8, 12),
-  c(11, 8),
-  c(2, 8),
-  c(16, 18),
-  c(18, 19),
-  c(19, 20),
-  c(20, 21),
-  c(21, 22),
-  c(22, 23),
-  c(23, 24),
-  c(24, 25),
-  c(25, 26),
-  c(26, 27),
-  c(27, 17))
-
-links_caudal <- rbind(
-   c(1, 2),
-  c(1, 11),
-  c(2, 11),
-  c(3, 4),
-  c(3, 5),
-  c(4, 5),
-  c(12, 13),
-  c(12, 14),
-  c(13, 14),
-  c(5, 14),
-  c(4, 15),
-  c(15, 13),
-  c(3, 8),
-  c(8, 12),
-  c(11, 8),
-  c(2, 8),
-  c(16, 17)
-)
 ```
 
 ```{r}
