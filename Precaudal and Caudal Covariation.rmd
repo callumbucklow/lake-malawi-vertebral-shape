@@ -619,6 +619,18 @@ pls1_shared_elongation_pgls <- pgls(shared_scaled_PLS1 ~ ln_length_ln_width, dat
 #summarise the model fit
 summary(pls1_shared_elongation_pgls)
 
+#fit a null model
+pls1_shared_null_pgls <- pgls(shared_scaled_PLS1 ~ 1, data = comp_data, lambda = "ML")
+
+#compare AICc values
+aicc_full <- pls1_shared_elongation_pgls$aicc
+aicc_null <- pls1_shared_null_pgls$aicc
+
+#calculate delta AICc (full model relative to null)
+delta_aicc <- aicc_full - aicc_null
+
+delta_aicc #-3.30115 moderate support that the model is better supported than the null model,
+
 #export species_data
 write.csv(species_data, "species_data.csv")
 ```
