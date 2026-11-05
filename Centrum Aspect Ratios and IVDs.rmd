@@ -141,16 +141,16 @@ compute_pic <- function(matrix_data, tree) {
 ```{r Calculate PICs for Traits}
 
 #list of trait column names in your dataframe
-traits <- c("total_count", "ln_length_ln_width", "scaled_IVD", "mean_car_log")
+traits <- c("total_count", "ln_length_ln_width", "mean_ivd", "mean_car_log")
 
 #initialize an empty list to store named vectors
 trait_vectors <- list()
 
 #loop over traits and create named vectors
 for(tr in traits){
-  vec <- species_data[[tr]]           # extract column
-  names(vec) <- species_data$species_name  # assign names
-  trait_vectors[[tr]] <- vec          # store in list
+  vec <- species_data[[tr]]           #extract column
+  names(vec) <- species_data$species_name  #assign names
+  trait_vectors[[tr]] <- vec          #store in list
 }
 
 #calculate PICs
@@ -158,59 +158,94 @@ pic_list <- lapply(trait_vectors, function(tr) pic(tr, pruned_tree))
 ```
 
 ```{r Comparison of PGLS Models (ln[Length]-ln[Width])}
-#fit pgls model (body aspect ratio ~ total count + scaled_IVD + centrum aspect ratio)
-bar_full <- pgls(ln_length_ln_width ~ total_count + scaled_IVD + mean_car_log, data = vcv_matrix, lambda = "ML")
+#fit pgls model (body aspect ratio ~ total count + mean_IVD + centrum aspect ratio)
+bar_full <- pgls(ln_length_ln_width ~ total_count + mean_car_log + mean_ivd*ln_standard_length, data = vcv_matrix, lambda = "ML") #adding in interaction term because IVD scales positively with standard length (see above)
 
 #summarise the model
-summary(bar_full) # aicc = -81.87937
+summary(bar_full) #aicc = -79.60399
 
 #fit pgls model for total count alone
 bar_tc <- pgls(ln_length_ln_width ~ total_count, data = vcv_matrix, lambda = "ML")
 
 #summarise the model
-summary(bar_tc) # aicc = -85.88898
+summary(bar_tc) #aicc = -85.88898
   
 #calculate delta AICc
-bar_tc$aicc - bar_full$aicc #-4.009609 #model with total count ivd and centrum aspect ratios considerably worse fit than total count alone
+bar_tc$aicc - bar_full$aicc #-6.284991 #model with total count ivd and centrum aspect ratios substantially worse fit than total count alone
+```
+```{r Repeat Model with SL Centered}
+
+#centre log standard length
+vcv_matrix$data$ln_sl_c <- with(
+  vcv_matrix$data,
+  ln_standard_length - mean(ln_standard_length, na.rm = TRUE)
+)
+
+#refit the full PGLS model with centred standard length, here we are checking for an interaction between the mean_ivd and standard length when the latter is centered. Everything should stay the same. Will make plotting easier.
+bar_full_c <- pgls(
+  ln_length_ln_width ~ total_count + mean_car_log +
+    mean_ivd * ln_sl_c,
+  data = vcv_matrix,
+  lambda = "ML"
+)
+
+summary(bar_full_c) #everything is the same
 ```
 
 ```{r Calculate Partial Regression Residuals}
 
 #define lambda from full model
-lambda <- bar_full$param[2]
+lambda <- bar_full_c$param[2]
 
-#total_count (lambda is fixed to that estimated in full model so that vcov is maintained)
-resid_response_tc <- residuals(pgls(ln_length_ln_width ~ scaled_IVD + mean_car_log,
-                                    data = vcv_matrix, lambda = lambda))
-resid_predictor_tc <- residuals(pgls(total_count ~ scaled_IVD + mean_car_log,
-                                     data = vcv_matrix, lambda = lambda))
+#total_count
+resid_response_tc <- residuals(pgls(
+  ln_length_ln_width ~ mean_ivd*ln_sl_c + mean_car_log,
+  data = vcv_matrix, lambda = lambda
+))
 
-#scaled_IVD
-resid_response_scaled_ivd <- residuals(pgls(ln_length_ln_width ~ total_count + mean_car_log,
-                                            data = vcv_matrix, lambda = lambda))
-resid_predictor_scaled_ivd <- residuals(pgls(scaled_IVD ~ total_count + mean_car_log,
-                                             data = vcv_matrix, lambda = lambda))
+resid_predictor_tc <- residuals(pgls(
+  total_count ~ mean_ivd*ln_sl_c + mean_car_log,
+  data = vcv_matrix, lambda = lambda
+))
 
 #mean_car_log
-resid_response_car <- residuals(pgls(ln_length_ln_width ~ total_count + scaled_IVD,
-                                     data = vcv_matrix, lambda = lambda))
-resid_predictor_car <- residuals(pgls(mean_car_log ~ total_count + scaled_IVD,
-                                      data = vcv_matrix, lambda = lambda))
+resid_response_car <- residuals(pgls(
+  ln_length_ln_width ~ total_count + mean_ivd*ln_sl_c,
+  data = vcv_matrix, lambda = lambda
+))
+
+resid_predictor_car <- residuals(pgls(
+  mean_car_log ~ total_count + mean_ivd*ln_sl_c,
+  data = vcv_matrix, lambda = lambda
+))
+
+#mean_ivd (at mean log standard length)
+resid_response_ivd <- residuals(pgls(
+  ln_length_ln_width ~ total_count + mean_car_log +
+    ln_sl_c + mean_ivd:ln_sl_c,
+  data = vcv_matrix, lambda = lambda
+))
+
+resid_predictor_ivd <- residuals(pgls(
+  mean_ivd ~ total_count + mean_car_log +
+    ln_sl_c + mean_ivd:ln_sl_c,
+  data = vcv_matrix, lambda = lambda
+))
 
 #assemble residuals into a dataframe
 df_partial <- bind_rows(
   data.frame(predictor = "total_count",
              x = resid_predictor_tc,
              y = resid_response_tc),
-  data.frame(predictor = "scaled_IVD",
-             x = resid_predictor_scaled_ivd,
-             y = resid_response_scaled_ivd),
+  data.frame(predictor = "mean_ivd", #with ln_sl_c
+             x = resid_predictor_ivd,
+             y = resid_response_ivd),
   data.frame(predictor = "mean_car_log",
              x = resid_predictor_car,
              y = resid_response_car)
 )
 df_partial$predictor <- factor(df_partial$predictor, 
-                               levels = c("total_count", "scaled_IVD", "mean_car_log"))
+                               levels = c("total_count", "mean_ivd", "mean_car_log"))
 
 #add species names column
 df_partial$species_name <- rownames(df_partial)
@@ -231,29 +266,41 @@ df_partial <-
 r_tc <- cor(resid_predictor_tc, resid_response_tc)
 r_tc
 
-#partial r for scaled_IVD
-r_ivd <- cor(resid_predictor_scaled_ivd, resid_response_scaled_ivd)
-r_ivd
-
 #partial r for mean_car_log
 r_car <- cor(resid_predictor_car, resid_response_car)
 r_car
+
+#partial r for mean_ivd*sl
+r_ivd <- cor(resid_predictor_ivd, resid_response_ivd)
+r_ivd
+
 ```
 
 ```{r Plot Partial Regressions}
 
+library(ggh4x) #for setting individual axes for facets
+
 #order facets for better plotting
 df_partial$predictor <- factor(df_partial$predictor, 
-                               levels = c("total_count", "mean_car_log", "scaled_IVD"))
+                               levels = c("total_count", "mean_car_log", "mean_ivd"))
+
+df_partial <- df_partial %>%
+  mutate(
+    x = if_else(predictor == "total_count", x * 10, x) #for making plotting prettier
+  )
+```
+
+```{r}
 
 #plot partial regressions
 a1 <- ggplot(df_partial, aes(x = x, y = y))+
   geom_point(aes(fill = lm_ecology), shape = 21, size = 3, colour = "black")+
-  #geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
+  geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
   geom_smooth(method = "lm", formula=y~x, se = FALSE, colour = "red", linetype='dashed')+
-  facet_wrap(~predictor, scales = "free_x"
-             )+
-  labs(x = "Partial Predictor", y = "Partial ln[Length] - ln[Depth]")+
+  facet_wrap(~predictor, scales = "free_x")+
+  labs(x = "Partial Predictor", y = "Partial ln[Body Aspect Ratio]")+
+  scale_y_continuous(
+  breaks = c(-0.30, 0.00, 0.30))+
    scale_fill_manual(values = c("Astatotilapia" = "#E87D72", 
                                 "not_applicable" = "#E87D72", 
                                 "Rhamphochromis" = "#51B3E6",
@@ -262,15 +309,168 @@ a1 <- ggplot(df_partial, aes(x = x, y = y))+
                                 "Shallow Benthic" = "#A18BF8",
                                 "Utaka" = "#FC61D7",
                                 "Mbuna" = "#00C095"))+
+ 
   theme_classic()+
     theme(legend.position = "none",
           axis.text = element_text(size = 14),
-          axis.title = element_text(size = 14, face = "bold"),
+          axis.title.y = element_text(size = 14, face = "bold"),
+          axis.title.x = element_text(size = 14, face = "bold", margin = margin(t=10)),
           axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14),
-        strip.text = element_blank()) #remove labels for facets, I can make nicer labels. Far left: Total Count, middle is centrum aspect ratio and right is scaled IVD.
+          strip.text = element_blank()) #remove labels for facets, I can make nicer labels. Far left: Total Count, middle is centrum aspect ratio and right is scaled IVD.
+a1
+
+a1 <- a1 +
+  ggh4x::facetted_pos_scales(
+    x = list(
+      predictor == "total_count" ~
+        scale_x_continuous(
+          breaks = c(-1, -0.5, 0, 0.5, 1.0)
+        ),
+
+      predictor == "mean_car_log" ~
+        scale_x_continuous(
+          breaks = c(-0.1, 0, 0.1, 0.2),
+          limits = c(-0.15, 0.2)
+        ),
+
+      predictor == "mean_ivd" ~
+        scale_x_continuous(
+        breaks = c(-1, -0.5, 0, 0.5, 1)
+        )
+    )
+  )
+
 a1
 
 ggsave('Figures/partial_regression_body_aspect_ratio.svg', a1, height=5, width=10)
+
+```
+
+```{r}
+# Order facets for better plotting
+df_partial$predictor <- factor(
+  df_partial$predictor,
+  levels = c("total_count", "mean_car_log", "scaled_IVD")
+)
+
+# Plot partial regressions
+a1 <- ggplot(df_partial, aes(x = x, y = y)) +
+
+  geom_point(
+    aes(fill = lm_ecology),
+    shape = 21,
+    size = 6,
+    alpha = 1.00,
+    stroke = 0.5,
+    colour = "black"
+  ) +
+
+  # Regression lines
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    colour = "yellow",
+    linetype = "dashed",
+    linewidth = 2
+  ) +
+
+  facet_wrap(
+    ~ predictor,
+    scales = "free_x"
+  ) +
+
+  scale_y_continuous(
+    labels = scales::label_number(accuracy = 0.1)
+  ) +
+
+  scale_fill_manual(values = c(
+    "Astatotilapia" = "#FF8A80",
+    "not_applicable" = "#FF8A80",
+
+    "Rhamphochromis" = "#5AC8FA",
+
+    "Diplotaxodon" = "#D9D9D9",
+
+    "Deep Benthic" = "#D4AF37",
+
+    "Shallow Benthic" = "#B39DFF",
+
+    "Utaka" = "#FF66E5",
+
+    "Mbuna" = "#00D9A3"
+  )) +
+
+  xlab("Partial Predictor") +
+  ylab("Partial ln[Body Aspect Ratio]") +
+
+  theme_classic(base_size = 20) +
+
+  theme(
+    legend.position = "none",
+
+    # Axis text
+    axis.text = element_text(
+      size = 24,
+      colour = "white"
+    ),
+
+    axis.text.x = element_text(
+      angle = 0,
+      vjust = 0,
+      hjust = 0.5,
+      size = 24,
+      colour = "white"
+    ),
+
+    # Axis titles
+    axis.title = element_text(
+      size = 24,
+      face = "bold",
+      colour = "white"
+    ),
+
+    # Axis lines
+    axis.line = element_line(
+      colour = "white",
+      linewidth = 1.00
+    ),
+
+    # Tick marks
+    axis.ticks = element_line(
+      colour = "white"
+    ),
+
+    # Remove facet labels
+    strip.text = element_blank(),
+
+    # Black backgrounds
+    panel.background = element_rect(
+      fill = "black",
+      colour = NA
+    ),
+
+    plot.background = element_rect(
+      fill = "black",
+      colour = NA
+    ),
+
+    # Space between facets
+    panel.spacing = unit(1, "lines")
+  )
+
+a1
+
+ggsave(
+  "Figures/partial_regression_body_aspect_ratio_black.svg",
+  a1,
+  height = 6,
+  width = 12,
+  bg = "black"
+)
+
+
+
 ```
 
 # Testing Lake Malawi Slope versus Whole Subfamily
@@ -394,10 +594,12 @@ ggsave("Figures/precaudal_caudal_centrum_aspect_ratios.svg", dpi=2000, a1, heigh
 
 #quick t-test to check differences are significant overall
 cars_pc_c_wide <- cars_pc_c %>%
-  pivot_wider(
+  tidyr::pivot_wider(
     names_from = domain,
     values_from = ln_length_ln_width
   )
+
+cars_pc_c
 
 t.test(cars_pc_c_wide$Precaudal, cars_pc_c_wide$Caudal, paired=TRUE) #p-value = 4.425e-12
 
@@ -424,4 +626,121 @@ plmm_pc_c_car <- pglmm(
 )
 
 summary(plmm_pc_c_car)
+```
+
+# For Poster
+
+```{r Partial Least Squares plot}
+
+a1 <- ggplot(df_partial, aes(x = x, y = y)) +
+
+  geom_point(
+    aes(fill = lm_ecology),
+    shape = 21,
+    size = 6,
+    alpha = 1,
+    stroke = 0.5,
+    colour = "black"
+  ) +
+
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    colour = "yellow",
+    linewidth = 2,
+    linetype = "dashed"
+  ) +
+
+  facet_wrap(
+    ~ predictor,
+    scales = "free_x",
+    labeller = labeller(
+      predictor = c(
+        total_count = "Total Count",
+        mean_car_log = "Centrum Elongation",
+        scaled_IVD = "Vertebral Spacing"
+      )
+    )
+  ) +
+
+  labs(
+    x = "Partial Predictor",
+    y = "Partial ln[Aspect Ratio]"
+  ) +
+
+  scale_fill_manual(values = c(
+    "Astatotilapia" = "#FF8A80",
+    "not_applicable" = "#FF8A80",
+    "Rhamphochromis" = "#5AC8FA",
+    "Diplotaxodon" = "#D9D9D9",
+    "Deep Benthic" = "#D4AF37",
+    "Shallow Benthic" = "#B39DFF",
+    "Utaka" = "#FF66E5",
+    "Mbuna" = "#00D9A3"
+  )) +
+
+  theme_classic(base_size = 20) +
+
+  theme(
+    legend.position = "none",
+
+    axis.text = element_text(
+      size = 20,
+      colour = "white"
+    ),
+
+    axis.title = element_text(
+      size = 24,
+      face = "bold",
+      colour = "white"
+    ),
+
+    strip.text = element_text(
+      size = 18,
+      face = "bold",
+      colour = "white"
+    ),
+
+    strip.background = element_rect(
+      fill = "#002147",
+      colour = NA
+    ),
+
+    axis.line = element_line(
+      colour = "white",
+      linewidth = 1
+    ),
+
+    axis.ticks = element_line(
+      colour = "white"
+    ),
+
+    panel.background = element_rect(
+      fill = "#002147",
+      colour = NA
+    ),
+
+    plot.background = element_rect(
+      fill = "#002147",
+      colour = NA
+    ),
+
+    panel.spacing = unit(1, "lines")
+  )
+
+a1
+
+ggsave(
+  "Figures/partial_regression_body_aspect_ratio_oxfordblue.svg",
+  a1,
+  width = 10,
+  height = 5,
+  bg = "#002147"
+)
+
+
+
+
+
 ```
