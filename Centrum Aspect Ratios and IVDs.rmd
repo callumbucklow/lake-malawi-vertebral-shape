@@ -173,6 +173,7 @@ summary(bar_tc) #aicc = -85.88898
 #calculate delta AICc
 bar_tc$aicc - bar_full$aicc #-6.284991 #model with total count ivd and centrum aspect ratios substantially worse fit than total count alone
 ```
+
 ```{r Repeat Model with SL Centered}
 
 #centre log standard length
@@ -288,14 +289,11 @@ df_partial <- df_partial %>%
   mutate(
     x = if_else(predictor == "total_count", x * 10, x) #for making plotting prettier
   )
-```
-
-```{r}
 
 #plot partial regressions
 a1 <- ggplot(df_partial, aes(x = x, y = y))+
   geom_point(aes(fill = lm_ecology), shape = 21, size = 3, colour = "black")+
-  geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
+  #geom_text(aes(label = species_name), size =1, vjust = -0.5)+ #add species names
   geom_smooth(method = "lm", formula=y~x, se = FALSE, colour = "red", linetype='dashed')+
   facet_wrap(~predictor, scales = "free_x")+
   labs(x = "Partial Predictor", y = "Partial ln[Body Aspect Ratio]")+
