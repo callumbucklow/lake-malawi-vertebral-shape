@@ -344,132 +344,152 @@ ggsave('Figures/partial_regression_body_aspect_ratio.svg', a1, height=5, width=1
 
 ```
 
-```{r}
-# Order facets for better plotting
-df_partial$predictor <- factor(
-  df_partial$predictor,
-  levels = c("total_count", "mean_car_log", "scaled_IVD")
-)
+```{r Deviating Species}
 
-# Plot partial regressions
-a1 <- ggplot(df_partial, aes(x = x, y = y)) +
+#ordinary residuals from your PGLS
+res <- residuals(bar_full_c, type = "response")
 
-  geom_point(
-    aes(fill = lm_ecology),
-    shape = 21,
-    size = 6,
-    alpha = 1.00,
-    stroke = 0.5,
-    colour = "black"
-  ) +
+#standardise
+z_res <- as.numeric(scale(res))
 
-  # Regression lines
-  geom_smooth(
-    method = "lm",
-    formula = y ~ x,
-    se = FALSE,
-    colour = "yellow",
-    linetype = "dashed",
-    linewidth = 2
-  ) +
+#add in the names
+names(z_res) <- rownames(res)
 
-  facet_wrap(
-    ~ predictor,
-    scales = "free_x"
-  ) +
+#species with positive deviations
+positive <- sort(z_res[z_res > 1], decreasing = TRUE) #if falls outside +-1SD, it is deviating somewhat strongly? It's not too stringent as to compeltely remove most of the species and not low enough to include some messiness.
 
-  scale_y_continuous(
-    labels = scales::label_number(accuracy = 0.1)
-  ) +
+#species with negative deviations
+negative <- sort(z_res[z_res < -1])
 
-  scale_fill_manual(values = c(
-    "Astatotilapia" = "#FF8A80",
-    "not_applicable" = "#FF8A80",
-
-    "Rhamphochromis" = "#5AC8FA",
-
-    "Diplotaxodon" = "#D9D9D9",
-
-    "Deep Benthic" = "#D4AF37",
-
-    "Shallow Benthic" = "#B39DFF",
-
-    "Utaka" = "#FF66E5",
-
-    "Mbuna" = "#00D9A3"
-  )) +
-
-  xlab("Partial Predictor") +
-  ylab("Partial ln[Body Aspect Ratio]") +
-
-  theme_classic(base_size = 20) +
-
-  theme(
-    legend.position = "none",
-
-    # Axis text
-    axis.text = element_text(
-      size = 24,
-      colour = "white"
-    ),
-
-    axis.text.x = element_text(
-      angle = 0,
-      vjust = 0,
-      hjust = 0.5,
-      size = 24,
-      colour = "white"
-    ),
-
-    # Axis titles
-    axis.title = element_text(
-      size = 24,
-      face = "bold",
-      colour = "white"
-    ),
-
-    # Axis lines
-    axis.line = element_line(
-      colour = "white",
-      linewidth = 1.00
-    ),
-
-    # Tick marks
-    axis.ticks = element_line(
-      colour = "white"
-    ),
-
-    # Remove facet labels
-    strip.text = element_blank(),
-
-    # Black backgrounds
-    panel.background = element_rect(
-      fill = "black",
-      colour = NA
-    ),
-
-    plot.background = element_rect(
-      fill = "black",
-      colour = NA
-    ),
-
-    # Space between facets
-    panel.spacing = unit(1, "lines")
-  )
-
-a1
-
-ggsave(
-  "Figures/partial_regression_body_aspect_ratio_black.svg",
-  a1,
-  height = 6,
-  width = 12,
-  bg = "black"
-)
-
-
-
+positive
+negative
 ```
+```{r Plot additive model residuals onto tree}
+
+#Positive residuals: Species that are more elongated than predicted by their centrum aspect ratio, vertebral count, intervertebral spacing and body size.
+#Negative residuals: Species that are deeper-bodied (less elongated) than predicted by those same traits.
+#Residuals near zero: Species whose body proportions are well predicted by the combined axial measurements.
+
+#Species with high or low residuals are elongate or deep-bodied by it cannot be predicted well by the factors in the model.
+
+#store the residuals
+model_residuals <- bar_full_c$residuals
+res <- as.numeric(model_residuals)
+
+#assign species names
+names(z_res) <- pruned_tree$tip.label
+
+#diverging colour palette centred on zero
+cols <- colorRampPalette(
+  c("#1B7837", "#F7F7F7", "#762A83")
+)(101)
+
+#symmetric limits around zero
+lim <- max(abs(z_res))
+
+#assign each residual a colour
+col_index <- round(
+  (z_res + lim) / (2 * lim) * 100
+) + 1
+
+tip_cols <- cols[col_index]
+
+#plot phylogeny
+tip_fonts <- ifelse(abs(z_res[pruned_tree$tip.label]) > 1, 2, 1) #bold species which are +-1SD residuals
+
+#export
+svg("Figures/residuals_on_tree.svg", width = 10, height = 10)
+
+plot(
+  pruned_tree,
+  type = "radial",
+  font = tip_fonts,
+  cex = 0.75,
+  label.offset = 0.05,
+  no.margin = TRUE
+)
+
+#add coloured circles at tips
+tiplabels(
+  pch = 21,
+  bg = tip_cols,
+  col = "grey30",
+  cex = 2.5
+)
+
+dev.off()
+
+min(model_residuals)
+
+max(model_residuals)
+```
+
+```{r Plot Radial Contmaps for Intro Figure}
+#tree
+tree <- new_pruned_tree
+
+#named trait vectors
+count_vec <- setNames(death$total_count, death$species_name)
+pcc_vec   <- setNames(exp(death$ln_pc_ln_c), death$species_name)  # only if logged
+
+##keep only species present in both traits and the tree
+common <- Reduce(intersect, list(tree$tip.label, names(count_vec), names(pcc_vec)))
+
+tree2 <- drop.tip(tree, setdiff(tree$tip.label, common))
+count_vec <- count_vec[tree2$tip.label]
+pcc_vec   <- pcc_vec[tree2$tip.label]
+
+#setseed
+set.seed(1931) #this is useful for making sure the same colours are picked each time
+
+#build contMap objects
+cm_pcc <- phytools::contMap(tree2, pcc_vec, plot = FALSE)
+cm_pcc <- phytools::setMap(
+  cm_pcc,
+  colorRampPalette(c("#B02418", "white", "#4B2EDD"))(100) #more red means more disproportionate caudal vertebral count. White is roughly the average.
+)
+
+cm_count <- phytools::contMap(tree2, count_vec, plot = FALSE)
+cm_count <- phytools::setMap(
+  cm_count,
+  colorRampPalette(c("#2C7BB6", "#ABD9E9", "#FFFFBF", "#FDAE61", "#D7191C"))(100)
+)
+
+#define ecomorphology colours to colour the tips of the phylogeny
+ecomorphology_colours <- c("Astatotilapia" = "#E87D72",
+  "not_applicable" = "#E87D72",
+  "Rhamphochromis" = "#51B3E6",
+  "Diplotaxodon" = "grey",
+  "Deep Benthic" = "#BD9C33",
+  "Shallow Benthic" = "#A18BF8",
+  "Utaka" = "#FC61D7",
+  "Mbuna" = "#00C095")
+
+#name ecology by species
+eco_vec <- setNames(death$lm_ecology, death$species_name)
+
+#keep only species in pruned tree and in correct order
+eco_vec <- eco_vec[tree2$tip.label]
+
+#map colours
+tip_colours <- unname(ecomorphology_colours[as.character(eco_vec)])
+length(tip_colours) == Ntip(tree2)
+
+#export
+svg("Figures/two_contmaps.svg", width = 15, height = 15)
+
+par(mfrow = c(1, 2), mar = c(0, 0, 0, 0), oma = c(0, 0, 0, 0))
+
+#plot total
+plot(cm_count, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi', tip.color = tip_colours)
+
+#plot pc:c
+plot(cm_pcc, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi', tip.color = tip_colours) #tip colours don
+
+dev.off()
+```
+
+
 
 # Testing Lake Malawi Slope versus Whole Subfamily
 
@@ -736,9 +756,129 @@ ggsave(
   height = 5,
   bg = "#002147"
 )
+```
 
+```{r}
+# Order facets for better plotting
+df_partial$predictor <- factor(
+  df_partial$predictor,
+  levels = c("total_count", "mean_car_log", "scaled_IVD")
+)
 
+# Plot partial regressions
+a1 <- ggplot(df_partial, aes(x = x, y = y)) +
 
+  geom_point(
+    aes(fill = lm_ecology),
+    shape = 21,
+    size = 6,
+    alpha = 1.00,
+    stroke = 0.5,
+    colour = "black"
+  ) +
 
+  # Regression lines
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    colour = "yellow",
+    linetype = "dashed",
+    linewidth = 2
+  ) +
+
+  facet_wrap(
+    ~ predictor,
+    scales = "free_x"
+  ) +
+
+  scale_y_continuous(
+    labels = scales::label_number(accuracy = 0.1)
+  ) +
+
+  scale_fill_manual(values = c(
+    "Astatotilapia" = "#FF8A80",
+    "not_applicable" = "#FF8A80",
+
+    "Rhamphochromis" = "#5AC8FA",
+
+    "Diplotaxodon" = "#D9D9D9",
+
+    "Deep Benthic" = "#D4AF37",
+
+    "Shallow Benthic" = "#B39DFF",
+
+    "Utaka" = "#FF66E5",
+
+    "Mbuna" = "#00D9A3"
+  )) +
+
+  xlab("Partial Predictor") +
+  ylab("Partial ln[Body Aspect Ratio]") +
+
+  theme_classic(base_size = 20) +
+
+  theme(
+    legend.position = "none",
+
+    # Axis text
+    axis.text = element_text(
+      size = 24,
+      colour = "white"
+    ),
+
+    axis.text.x = element_text(
+      angle = 0,
+      vjust = 0,
+      hjust = 0.5,
+      size = 24,
+      colour = "white"
+    ),
+
+    # Axis titles
+    axis.title = element_text(
+      size = 24,
+      face = "bold",
+      colour = "white"
+    ),
+
+    # Axis lines
+    axis.line = element_line(
+      colour = "white",
+      linewidth = 1.00
+    ),
+
+    # Tick marks
+    axis.ticks = element_line(
+      colour = "white"
+    ),
+
+    # Remove facet labels
+    strip.text = element_blank(),
+
+    # Black backgrounds
+    panel.background = element_rect(
+      fill = "black",
+      colour = NA
+    ),
+
+    plot.background = element_rect(
+      fill = "black",
+      colour = NA
+    ),
+
+    # Space between facets
+    panel.spacing = unit(1, "lines")
+  )
+
+a1
+
+ggsave(
+  "Figures/partial_regression_body_aspect_ratio_black.svg",
+  a1,
+  height = 6,
+  width = 12,
+  bg = "black"
+)
 
 ```

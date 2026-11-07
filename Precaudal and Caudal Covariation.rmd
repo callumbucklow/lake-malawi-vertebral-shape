@@ -290,7 +290,6 @@ species_data <- species_data %>%
   left_join(species_specimen_lengths %>%
               dplyr::select(species_name, ln_standard_length),
             by = "species_name")
-
 ```
 
 ```{r Fit PGLS Model on Size-Corrected Caudal Shape Residuals}
@@ -827,7 +826,7 @@ ggsave(
 )
 ```
 
-```{r}
+```{r Plotting PLS1 blocks (Precaudal and Caudal)}
 
 a3 <- ggplot(
   species_data,
