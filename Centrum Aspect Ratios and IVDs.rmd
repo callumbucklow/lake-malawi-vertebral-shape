@@ -419,14 +419,99 @@ tiplabels(
 
 dev.off()
 
-min(model_residuals)
+min(z_res)
 
-max(model_residuals)
+max(z_res)
 ```
 
-```{r Plot Radial Contmaps for Intro Figure}
+
+```{r Elongation via CAR?}
+
+#even though there's no relationship across the radiation, I am convinced some lineages are elongating themselves by elongating their centra (primarily mbunas)
+#we can plot the residuals of body aspect ratio ~ total count against the centrum aspect ratio to identify species which have high CARs whilst controlling for the elongation that is a result of the total count (roughly)
+
+#extract the residuals from the body aspect ratio ~ total count pgls model:
+bar_tc_residuals <- bar_tc$residuals
+
+#standardise the residuals
+bar_tc_z_residuals <- as.numeric(scale(bar_tc_residuals))
+
+#add in the names
+names(bar_tc_z_residuals) <- rownames(bar_tc_residuals)
+
+#arrange into dataframe for plotting
+residuals_cars <- data.frame(
+  species_name = names(bar_tc_z_residuals),
+  res_z_score = as.numeric(bar_tc_z_residuals),
+  ln_car = species_data$mean_car_log,
+  lm_ecology = species_data$lm_ecology
+)
+
+mean_ln_car <- mean(residuals_cars$ln_car) #0.2936778
+sd_ln_car <- sd(residuals_cars$ln_car) #0.100218
+
+
+mean_ln_car+sd_ln_car #0.3938957
+
+```
+
+```{r Plot Residuals against CAR}
+#plot them
+bitch <- ggplot(residuals_cars, aes(x=res_z_score, y=ln_car))+
+  geom_point(aes(fill = lm_ecology), shape = 21, size = 3.5, colour = "black")+
+  #geom_text(aes(label = species_name), size = 2.5, vjust = -0.5)+ #add species names
+  scale_fill_manual(values = c("Astatotilapia" = "#E87D72", 
+                                "not_applicable" = "#E87D72", 
+                                "Rhamphochromis" = "#51B3E6",
+                                "Diplotaxodon" = "grey",
+                                "Deep Benthic" = "#BD9C33",
+                                "Shallow Benthic" = "#A18BF8",
+                                "Utaka" = "#FC61D7",
+                                "Mbuna" = "#00C095"))+
+  #geom_vline(xintercept = 1.00)+ #residuals 1SD from mean
+  geom_vline(xintercept = 0.00, linetype='dashed', linewidth=0.50)+ #any positive residuals (i.e. more elongate than predicted by BAR ~ CAR)
+  geom_hline(yintercept = 0.3938957, linetype='dashed', linewidth=0.50)+ #mean + 1SD
+  labs(x = "Standardised PGLS residual (ln[Body AR] ~ ln[TC])", y = "ln[Centrum Aspect Ratio]")+
+  scale_y_continuous(
+  breaks = seq(0.10, 0.60, by = 0.10),
+  limits = c(0.10, 0.60))+
+  scale_x_continuous(
+  breaks = seq(-3, 2, by = 1),
+  limits = c(-3, 2))+
+  theme_classic()+
+  theme(legend.position = "none",
+          axis.text = element_text(size = 14),
+          axis.title.y = element_text(size = 14, face = "bold"),
+          axis.title.x = element_text(size = 14, face = "bold", margin = margin(t=10)),
+          axis.text.x = element_text(angle = 0, vjust=0, hjust=0.5, size=14),
+          strip.text = element_blank()) #remove labels for facets, I can make nicer labels. Far left: Total Count, middle is centrum aspect ratio and right is scaled IVD.
+
+bitch
+
+ggsave('Figures/centrum_aspect_ratio_weirdos.svg', bitch, height=4.5, width=10)
+```
+
+```{r Add residuals to species data for export}
+
+#add residuals to the species_data dataframe for export
+species_residuals <- 
+  data.frame(species_name = species_data$species_name, 
+             scaled_residuals_full_additive_model = z_res,
+             scaled_residuals_total_count_model_alone = bar_tc_z_residuals)
+
+species_residuals
+
+#export the data
+write.csv(species_residuals, "Data/species_residuals.csv")
+```
+
+
+
+
+
+```{r Plot Radial Contmaps for Intro Figure, echo=FALSE}
 #tree
-tree <- new_pruned_tree
+tree <- pruned_tree
 
 #named trait vectors
 count_vec <- setNames(death$total_count, death$species_name)
@@ -488,7 +573,6 @@ plot(cm_pcc, type = "fan", fsize = 0.5, lwd = 4, offset = 2.5, ftype='bi', tip.c
 
 dev.off()
 ```
-
 
 
 # Testing Lake Malawi Slope versus Whole Subfamily
